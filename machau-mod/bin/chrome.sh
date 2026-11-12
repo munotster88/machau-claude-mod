@@ -1,23 +1,23 @@
 #!/bin/zsh
-# Drive Sid's real Chrome (his sign-ins) through AppleScript: the same route as the "Control Chrome" extension,
+# Drive your real Chrome (your sign-ins) through AppleScript: the same route as the "Control Chrome" extension,
 # usable from any harness's shell. Needs Chrome > View > Developer > "Allow JavaScript from Apple Events" (on).
-# Sid, 12 Nov 2026: never bring Chrome to the front, never move the tab he is on, one tab per website.
+# House rule: never bring Chrome to the front, never move the tab you are on, one tab per website.
 #   chrome.sh open URL            load URL in Claude's own BACKGROUND tab for that website: the tab already opened for
-#                                 that site is reused, otherwise one new tab is added at the end of Sid's regular
-#                                 window. Sid's tab stays in front and the app he is in keeps the front (a first tab
+#                                 that site is reused, otherwise one new tab is added at the end of your regular
+#                                 window. your tab stays in front and the app you are in keeps the front (a first tab
 #                                 for a site raises Chrome for a moment; it is handed straight back). Later commands use this tab.
-#   chrome.sh url                 address of Claude's tab (Sid's front tab if this session opened nothing, or after `here`)
+#   chrome.sh url                 address of Claude's tab (your front tab if this session opened nothing, or after `here`)
 #   chrome.sh text [N]            first N (default 3000) characters of the page text
 #   chrome.sh js 'CODE'           run JavaScript in the tab, print its result
 #   chrome.sh click 'Label'       click the button/link whose text or label is Label (reaches Amazon kat-* shadow buttons)
 #   chrome.sh close               close Claude's tab when the work is finished
-#   chrome.sh here                switch this session back to Sid's front tab (to read what he is looking at)
+#   chrome.sh here                switch this session back to your front tab (to read what you are looking at)
 #   chrome.sh tabs                list every tab as "window.tab  address" (the front window is 1)
 # Secrets on a page: pipe `chrome.sh js` straight into pbcopy or a script; never print them.
 STATE="$HOME/.local/state/chrome-sh"; mkdir -p "$STATE"
 CUR="$STATE/cur-${CLAUDE_CODE_SESSION_ID:-shared}"
 
-# One AppleScript for every action on a tab, found by its Chrome tab id ("front" = Sid's active tab).
+# One AppleScript for every action on a tab, found by its Chrome tab id ("front" = your active tab).
 tab() { osascript - "$@" <<'OSA'
 on run argv
   set act to item 1 of argv
@@ -25,7 +25,7 @@ on run argv
   set arg to ""
   if (count of argv) > 2 then set arg to item 3 of argv
   -- Chrome pulls itself to the front when a tab is made or its address is set from outside (measured 12 Nov 2026).
-  -- So those two steps note which app Sid is in and hand the front straight back to it.
+  -- So those two steps note which app the person is in and hand the front straight back to it.
   set fp to ""
   if act is "new" or act is "seturl" then
     tell application "System Events" to set fp to name of first process whose frontmost is true
@@ -84,7 +84,7 @@ end work
 OSA
 }
 
-# The tab this session works in: its own background tab if it opened one that still exists, else Sid's front tab.
+# The tab this session works in: its own background tab if it opened one that still exists, else your front tab.
 cur() { local id; id=$(cat "$CUR" 2>/dev/null); [ -n "$id" ] && [ "$(tab exists "$id")" = yes ] && echo "$id" || echo front; }
 js() { tab js "$(cur)" "$1"; }
 
@@ -111,7 +111,7 @@ case "$1" in
     (inner||el).click(); return 'clicked '+el.tagName;})()" ;;
   close) id=$(cur); [ "$id" = front ] && { echo "no tab of Claude's own to close"; exit 0; }
     tab close "$id"; rm -f "$CUR"; grep -lx "$id" "$STATE"/host-* 2>/dev/null | xargs rm -f ;;
-  here) rm -f "$CUR"; echo "now on Sid's front tab" ;;
+  here) rm -f "$CUR"; echo "now on your front tab" ;;
   tabs) osascript -e 'tell application "Google Chrome"
     set out to ""
     set wi to 0

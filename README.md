@@ -13,7 +13,11 @@ It does nothing in ordinary chat.
 | No Claude in Chrome | Refuses the Claude in Chrome tools | off |
 
 ## Install (once)
-You need a GitHub account that has been invited to this repo, and to be signed in to GitHub on your machine (`gh auth login`).
+Easiest: paste this into a Code session in the Claude app and let Claude do it:
+
+> Install the Claude plugin machau-mod from the GitHub marketplace munotster88/machau-claude-mod (run `claude plugin marketplace add munotster88/machau-claude-mod`, then `claude plugin install machau-mod@machau`) and tell me when it is done.
+
+Or run the two commands yourself in a terminal:
 
 ```bash
 claude plugin marketplace add munotster88/machau-claude-mod
@@ -35,7 +39,7 @@ claude plugin update machau-mod@machau
 Create `~/.config/machau-mod/profile.json`, for example `{ "switches": { "noClaudeInChrome": true } }`.
 
 ## Never put keys in this repo
-Everyone invited would get them. Keys stay in each person's own Keychain.
+It is public. Keys stay in each person's own Keychain.
 
 ## Changing the mod
 Logic in `machau-mod/hooks/lib.ts` with a test (`node --test machau-mod/hooks/lib.test.ts`), hook in `register.ts`, a row above, and a higher `version` in `machau-mod/.claude-plugin/plugin.json`.

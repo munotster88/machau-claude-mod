@@ -1,5 +1,5 @@
 {
   "name": "machau-mod",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Machau's Claude mod: one small piece per recurring problem (secret mask, no blank Chrome, context trim, model routing; optional live-claim guard and no Claude in Chrome)"
 }
