@@ -1,0 +1,16 @@
+{
+  "name": "machau",
+  "owner": {
+    "name": "Machau"
+  },
+  "metadata": {
+    "description": "Machau's Claude mod for the team"
+  },
+  "plugins": [
+    {
+      "name": "machau-mod",
+      "source": "./machau-mod",
+      "description": "Guards and savings for every Claude session: secret mask, no blank logged-out Chrome, smaller session start, right-sized helper models"
+    }
+  ]
+}
