@@ -110,7 +110,7 @@ test('cuts long skill descriptions, keeps short and protected ones', () => {
   const long = 'x'.repeat(30) + ' ' + 'word '.repeat(80)
   const text = `The following skills are available:\n\n- aws-iam\n- docx: ${long}\nsecond line of docx\n- impeccable: ${long}\n- anthropic-skills:delegate-with-judgment: ${long}\n- short: fine`
   const out = trimSkills(text)
-  assert.ok(out.includes('- aws-iam\n'))
+  assert.ok(out.includes('aws-iam'))
   assert.ok(out.split('\n').find(l => l.startsWith('- docx'))!.length < 230)
   assert.ok(!out.includes('second line of docx'))
   assert.ok(out.includes(`- impeccable: ${long.trim()}`))
@@ -146,4 +146,16 @@ test('deferral, name splitting, routing', () => {
   assert.equal(routeFor(ROUTE_LABELS[1]), 'sonnet')
   assert.equal(routeFor(ROUTE_LABELS[2]), 'haiku')
   assert.equal(routeFor(undefined), 'sonnet')
+})
+
+test('bare-name skill families fold to one line; described families stay', () => {
+  const out = trimSkills(['Skills:', '- aws-cdk', '- graphify', '- cloudflare:wrangler: Run Wrangler CLI commands.', '- aws-iam', '- higgsfield-generate'].join('\n'))
+  assert.ok(out.includes('- AWS skills, 2 (invoke one by its exact name): aws-cdk, aws-iam'))
+  assert.ok(out.includes('- cloudflare:wrangler: Run Wrangler CLI commands.') && out.includes('- graphify') && out.includes('higgsfield-generate'))
+})
+
+test('rarely used loaded tools are deferred, daily ones are not', () => {
+  assert.ok(shouldDefer('AskUserQuestion') && shouldDefer('ReadNotifications'))
+  assert.ok(shouldDefer('mcp__1a59c906-04da-521d-bda7-7f71b9f9e01c__batch'))
+  assert.ok(!shouldDefer('mcp__ccd_turn__wrap_up') && !shouldDefer('Agent') && !shouldDefer('Skill'))
 })

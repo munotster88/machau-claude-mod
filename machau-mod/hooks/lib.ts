@@ -68,7 +68,13 @@ export const isPlaywright = (tool: string) => /^mcp__(plugin_)?playwright(_playw
 
 // ---------- context trim ----------
 // Tools moved behind ToolSearch: still callable, their schemas load on first use (carried over from the old ctxdiet mod).
-const DEFER_NAMES = new Set(['Artifact', 'Workflow', 'ScheduleWakeup', 'ReportFindings', 'ListAgents', 'SendUserFile'])
+const DEFER_NAMES = new Set([
+  'Artifact', 'Workflow', 'ScheduleWakeup', 'ReportFindings', 'ListAgents', 'SendUserFile',
+  // Loaded in every session but rarely called: they load on first use instead.
+  'AskUserQuestion', 'ReadNotifications',
+])
+// The three Claude Docs tools the app keeps loaded. The connector's instructions stay in view.
+const DEFER_DOCS = /^mcp__[0-9a-f-]{36}__(?:batch|guide|update)$/
 const DEFER_PREFIXES = [
   'mcp__Claude_Browser__',
   'mcp__Claude_Code_iOS_Simulator__',
@@ -79,7 +85,7 @@ const DEFER_PREFIXES = [
 // Adobe keeps three tools loaded in every session; nothing here needs them up front.
 const DEFER_SUFFIX = /__(?:adobe_mandatory_init|export_html_to_express|create_visual_design_express_skill)$/
 export const shouldDefer = (tool: string) =>
-  DEFER_NAMES.has(tool) || DEFER_PREFIXES.some(p => tool.startsWith(p)) || DEFER_SUFFIX.test(tool)
+  DEFER_NAMES.has(tool) || DEFER_PREFIXES.some(p => tool.startsWith(p)) || DEFER_SUFFIX.test(tool) || DEFER_DOCS.test(tool)
 
 // One line per group above, shown only when that group is offered: hook-deferred tools are listed nowhere else.
 export const ON_DEMAND_INDEX: ReadonlyArray<readonly [string, string]> = [
@@ -89,6 +95,8 @@ export const ON_DEMAND_INDEX: ReadonlyArray<readonly [string, string]> = [
   ['ReportFindings', 'ReportFindings: report code-review findings'],
   ['ListAgents', 'ListAgents: other running Claude sessions to message'],
   ['SendUserFile', 'SendUserFile: send a file to the user'],
+  ['AskUserQuestion', 'AskUserQuestion: a multiple-choice question dialog for the user'],
+  ['ReadNotifications', 'ReadNotifications: read queued notifications (load it the moment a notice says some are pending)'],
   ['mcp__Claude_Browser__', 'mcp__Claude_Browser__*: in-app browser pane and dev-server preview (ToolSearch "+Claude_Browser", max_results 25)'],
   ['mcp__Claude_Code_iOS_Simulator__', 'mcp__Claude_Code_iOS_Simulator__control: iOS Simulator'],
   ['mcp__terminal__', 'mcp__terminal__read_terminal: read the Terminal panel'],
@@ -181,21 +189,37 @@ export function trimToolList(text: string): string {
 
 const SKILL_FULL = new Set(['delegate-with-judgment', 'impeccable', 'docs', 'google-workspace'])
 const SKILL_CAP = 200
+// Families that list many skills by bare name: one line each, every name kept so any can still be invoked.
+// (Families with descriptions, such as Cloudflare, are left alone here: a developer on the team may rely on them.)
+const SKILL_FAMILIES: ReadonlyArray<readonly [string, RegExp]> = [
+  ['AWS', /^(?:aws-|amazon-bedrock$|launch-with-aws$|setting-up-cloudwatch-observability$|signing-in-to-aws$)/],
+  ['Higgsfield', /^higgsfield-/],
+]
 
 /** The skills list with long descriptions cut to their opening; a skill's full text still loads when it is invoked. */
 export function trimSkills(text: string): string {
   const parts = text.split(/\n(?=- )/)
-  return parts
-    .map((entry, i) => {
-      if (i === 0) return entry
-      // The name may itself hold colons (anthropic-skills:docx), so it ends at the first colon followed by a space.
-      const m = /^- (\S+): ([\s\S]*)$/.exec(entry)
-      if (!m) return entry
-      const short = m[1].split(':').pop()!.trim()
-      const desc = m[2].replace(/\s+/g, ' ').trim()
-      if (SKILL_FULL.has(short) || desc.length <= SKILL_CAP) return entry.trimEnd()
-      return `- ${m[1]}: ${desc.slice(0, SKILL_CAP).replace(/\s+\S*$/, '')}…`
-    })
+  const folded = new Map<string, string[]>()
+  const out: (string | { family: string })[] = []
+  parts.forEach((entry, i) => {
+    if (i === 0) return void out.push(entry)
+    // The name may itself hold colons (anthropic-skills:docx), so it ends at the first colon followed by a space.
+    const m = /^- (\S+?)(?:: ([\s\S]*))?$/.exec(entry.trimEnd())
+    // A bare name is one line; anything else without a description is not a skill entry and passes through.
+    if (!m || (m[2] === undefined && /\s/.test(m[1]))) return void out.push(entry)
+    const family = SKILL_FAMILIES.find(([, test]) => test.test(m[1]))?.[0]
+    if (family) {
+      if (!folded.has(family)) (folded.set(family, []), out.push({ family }))
+      return void folded.get(family)!.push(m[1])
+    }
+    if (m[2] === undefined) return void out.push(entry)
+    const short = m[1].split(':').pop()!.trim()
+    const desc = m[2].replace(/\s+/g, ' ').trim()
+    if (SKILL_FULL.has(short) || desc.length <= SKILL_CAP) return void out.push(entry.trimEnd())
+    out.push(`- ${m[1]}: ${desc.slice(0, SKILL_CAP).replace(/\s+\S*$/, '')}…`)
+  })
+  return out
+    .map(x => (typeof x === 'string' ? x : `- ${x.family} skills, ${folded.get(x.family)!.length} (invoke one by its exact name): ${folded.get(x.family)!.join(', ')}`))
     .join('\n')
 }
 
