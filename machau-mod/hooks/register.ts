@@ -105,8 +105,12 @@ export const register: Register = on => {
       // never from some other tool's text that happens to hold the words.
       const isShipCheck = /\bship-check\b/.test(command)
       if (isShipCheck) shipCheckStarted = true
-      if (hasLiveVerdict(r.text ?? '') && (isShipCheck || (shipCheckStarted && !command))) liveAt = tick
-      else if (isDeployish(command) || tool === 'mcp__ccd_pr__set_auto_merge') deployAt = tick
+      // A Bash result keeps its output in result.stdout, not in text (missed until 13 Nov: a passed ship check was not seen).
+      const out = r.result as { stdout?: unknown; stderr?: unknown } | undefined
+      const seen = `${r.text ?? ''}\n${typeof out?.stdout === 'string' ? out.stdout : ''}\n${typeof out?.stderr === 'string' ? out.stderr : ''}`
+      if (hasLiveVerdict(seen) && (isShipCheck || (shipCheckStarted && !command))) liveAt = tick
+      // The ship check itself is never a deploy: one that has not said LIVE yet must not reset the guard.
+      else if (!isShipCheck && (isDeployish(command) || tool === 'mcp__ccd_pr__set_auto_merge')) deployAt = tick
     }
 
     // Context trim: hand over a connector's held-back instructions when its tools are first looked up.

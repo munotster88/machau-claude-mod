@@ -44,7 +44,8 @@ export const hasLiveVerdict = (text: string) => /\bVERDICT:\s*LIVE\b/.test(text)
 const CLAIM =
   /\b(?:is|are|now|went|gone|goes|it'?s|that'?s|both|all)\s+(?:now\s+|fully\s+|already\s+)?(?:live|deployed|in production)\b|\b(?:deployed|shipped|released)\s+to\s+(?:prod|production)\b/i
 // Sentences that talk about live without claiming it: negations, conditions, questions.
-const NOT_A_CLAIM = /\b(?:not|never|once|when|until|if|whether|will|should|won'?t)\b|n't\b|\?/i
+// (12 Nov: three of the first five nudges were wrong: "I'll check it's live", "as soon as ... says it's live", "Neither change is live yet".)
+const NOT_A_CLAIM = /\b(?:not|never|no|neither|nor|yet|once|when|until|if|whether|will|would|should|won'?t|soon|after|before|check|confirm|verify|see|make sure|going to)\b|n't\b|'ll\b|\?/i
 
 /** The first sentence of a reply that states something is live or deployed, or undefined. */
 export function liveClaim(answer: string): string | undefined {

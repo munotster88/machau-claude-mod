@@ -59,6 +59,9 @@ test('does not flag talk about live that is not a claim', () => {
     'The ship check says `VERDICT: LIVE` only when the site answers.',
     "It isn't deployed yet.",
     'We met at the live event.',
+    "I'll check it's live, then tell Nirupam.",
+    "I'll message Nirupam the steps as soon as the ship check says it's live.",
+    'Neither change is live yet.',
     '```\nit is live\n```',
   ]) assert.equal(liveClaim(s), undefined, s)
 })
