@@ -41,14 +41,16 @@ async function load(reading?: () => string) {
     const f = join(home, '.local', 'state', 'machau-mod', 'events.jsonl')
     return existsSync(f) ? readFileSync(f, 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l) as { piece: string; detail: Record<string, unknown> }) : []
   }
-  /** The log is written without waiting, so a test waits for the line it expects. */
-  const logged = async (piece: string) => {
-    for (let i = 0; i < 150; i++) {
-      const hit = log().filter(l => l.piece === piece)
-      if (hit.length > 0) return hit
+  /** The log is written without waiting (one short command per line), so a test waits for the lines it expects. */
+  type Line = { piece: string; detail: Record<string, unknown> }
+  const logged = async (piece: string, enough: (lines: Line[]) => boolean = lines => lines.length > 0) => {
+    let hit: Line[] = []
+    for (let i = 0; i < 200; i++) {
+      hit = log().filter(l => l.piece === piece)
+      if (enough(hit)) return hit
       await new Promise(r => setTimeout(r, 100))
     }
-    return []
+    return hit
   }
   return { hooks, call, sent, commands, compacts: () => compacts, home, log, logged }
 }
@@ -98,8 +100,8 @@ test('a full computer holds a new session and a helper; the person saying "start
   assert.match(String((await m.call('tool.call', start, { ok: true })).deny), /Capacity check/)
   await m.call('prompt.submit', { text: 'ok, start it anyway', origin: { kind: 'human' } }, {})
   assert.equal((await m.call('tool.call', start, { ok: true })).deny, undefined)
-  const lines = await m.logged('capacityGate')
-  assert.ok(lines.some(l => typeof l.detail.held === 'string') && lines.some(l => l.detail.override))
+  const both = (lines: { detail: Record<string, unknown> }[]) => lines.some(l => typeof l.detail.held === 'string') && lines.some(l => Boolean(l.detail.override))
+  assert.ok(both(await m.logged('capacityGate', both)))
 })
 
 test('with room, the first session starts and a second one inside 90 seconds waits', { skip: !WIN && !MAC }, async () => {
@@ -113,7 +115,8 @@ test('with room, the first session starts and a second one inside 90 seconds wai
 test('a reading that cannot be read never blocks a start', { skip: !WIN && !MAC }, async () => {
   const m = await load(() => 'garbage')
   assert.equal((await m.call('tool.call', { tool: 'mcp__ccd_session__start_session', prompt: 'Fix the bug', title: 'Fix' }, { ok: true })).deny, undefined)
-  assert.ok((await m.logged('capacityGate')).some(l => l.detail.failOpen))
+  const failedOpen = (lines: { detail: Record<string, unknown> }[]) => lines.some(l => Boolean(l.detail.failOpen))
+  assert.ok(failedOpen(await m.logged('capacityGate', failedOpen)))
 })
 
 test('a big session is asked once to save its state, and "shrink this session" shrinks it', async () => {
