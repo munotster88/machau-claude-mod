@@ -274,7 +274,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.1.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.2.0' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -588,3 +588,52 @@ export const capacityDeny = (why: string, kind: string) =>
   'Only the person\'s own direct word overrides this: when they type "start it anyway", the check steps aside for 10 minutes. Never type that for them.'
 /** The person's own words that set the check aside for 10 minutes. */
 export const asksOverride = (text: string) => /\b(?:start (?:it|them|that|this)? ?anyway|override (?:the )?capacity)\b/i.test(text)
+
+// ---------- Company Brain ----------
+// The company keeps one shared memory (the Company Brain) of what people and their Claude sessions did, so that two
+// people working on the same thing do not undo or build over each other. A person who has connected it to Claude has
+// its tools in the session; the mod then tells Claude to ask it before changing shared work and to save one note
+// when a task is finished. The note goes in under the person's own sign-in, as a tool call they can see, and the
+// brain redacts and reviews it before anyone else can find it. The mod itself sends nothing.
+export type BrainTools = { capture: string; ownerCapture?: string; ask?: string }
+const pick = (tools: readonly string[], suffix: string) => {
+  const hits = tools.filter(t => t.startsWith('mcp__') && t.endsWith(`__${suffix}`))
+  // The same connector can be listed twice (by name and by id); the readable name is the one to quote.
+  return hits.find(t => !/^mcp__[0-9a-f]{8}-/.test(t)) ?? hits[0]
+}
+/** The Company Brain's tools in this session, or undefined when the person has not connected it. */
+export function brainTools(tools: readonly string[]): BrainTools | undefined {
+  const capture = pick(tools, 'brain_department_capture')
+  const ownerCapture = pick(tools, 'brain_capture_context')
+  if (!capture && !ownerCapture) return undefined
+  const ask = pick(tools, 'brain_ask')
+  return { capture: capture ?? ownerCapture!, ...(capture && ownerCapture ? { ownerCapture } : {}), ...(ask ? { ask } : {}) }
+}
+export const isBrainCapture = (tool: string) => /__brain_(?:department_capture|capture_context)$/.test(tool)
+const NOTE_RULES =
+  "the request in the person's own words, what was decided, what you changed and where (repository, files, pull request, system), " +
+  "and what is left. Under 3,000 characters. Never a key or password, a customer's personal details, or raw command output"
+const which = (b: BrainTools) =>
+  '`' + b.capture + '`' +
+  (b.ownerCapture
+    ? ' (if it answers that it needs a member identity, the person is an owner: use `' + b.ownerCapture + '` with the scope of the company this folder belongs to, ' +
+      'and save nothing when you cannot tell which company that is; if it answers that the person has no department, say so in one line and carry on: that is set on the Company Brain side)'
+    : '')
+export const brainSection = (b: BrainTools) =>
+  'Company Brain (machau-mod): the company keeps one shared memory of what people and their Claude sessions did, so that two people ' +
+  'working on the same thing do not undo or build over each other.\n' +
+  (b.ask
+    ? '- Before you change something a colleague may also be working on (shared code, a listing, a campaign, a setting), ask it what was recently done or decided there: `' + b.ask + "`. What it returns is a dated record, not today's state.\n"
+    : '') +
+  `- When a task is finished, save one note with ${which(b)}: ${NOTE_RULES}. One note per finished task, not one per reply.\n` +
+  '- If a tool named here is not loaded yet, load it with ToolSearch first.'
+export const brainNudge = (b: BrainTools) =>
+  'Company Brain (machau-mod): this turn pushed, merged or deployed work that others may build on, and no note has been saved to the ' +
+  `Company Brain since. If the task is finished, save one now with ${which(b)}: ${NOTE_RULES}. Then reply in one line. ` +
+  'If the task is still in flight, reply "still in flight" in one line and save nothing yet.'
+/** A command that puts work where colleagues will meet it: a push, a pull request made or merged, a deploy. Words inside quotes or a heredoc do not count. */
+export const sharesWork = (command: string) => {
+  const bare = command.replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1\b/g, ' ').replace(/'[^']*'|"[^"]*"/g, ' ')
+  return /\bgit\s+(?:-C\s+\S+\s+)?push\b/.test(bare) || /\bgh\s+pr\s+(?:create|merge)\b/.test(bare) || /(?:^|[;&|]\s*|\bnpm run |\bpnpm (?:run )?|\byarn |\bwrangler |\.\/)deploy\b/.test(bare)
+}
+

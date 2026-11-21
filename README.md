@@ -11,6 +11,7 @@ It does nothing in ordinary chat.
 | Task-list ticks | In the Claude app, a step of the task list that has shown as running for 8 tool calls gets a reminder to tick it, so the list moves while the work runs | on |
 | Session shrink | A long session is shortened in place: every word between you and Claude is kept, old tool output becomes one-line receipts. Past 300k tokens it happens by itself between tasks; "shrink this session" does it on request | on |
 | Capacity check | A new session or helper is held when the computer has no memory left for it. Type "start it anyway" to set it aside for 10 minutes | on |
+| Company Brain | Only if you have connected the Company Brain to Claude: Claude asks it before changing something a colleague may also be working on, and saves one short note when a task is finished (what was asked, decided and changed, and where). The note goes in under your own sign-in as a tool call you can see; the brain redacts and reviews it before anyone else can find it. Never keys, customer details or raw output | on |
 | No blank Chrome | Refuses Playwright's logged-out Chrome window; points Claude to `chrome.sh` (a background tab in your own Chrome, Mac only) or the built-in browser | on (Mac), off (Windows) |
 | Live-claim guard | "It is live" after a deploy needs a ship check first (needs `~/os/bin/ship-check.py`) | off |
 | No Claude in Chrome | Refuses the Claude in Chrome tools | off |

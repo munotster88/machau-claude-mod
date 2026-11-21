@@ -329,3 +329,30 @@ test('capacity: reads a real Mac reading and a real Windows reading', () => {
   assert.deepEqual(parseWindowsReading(win), { os: 'windows', ram_gb: 15.7, cores: 12, free_pct: 40, swap_gb: 0, load1: 0, heavy_procs: 0 })
   assert.equal(parseWindowsReading(''), undefined)
 })
+
+// ---------- 1.2.0: Company Brain ----------
+import { brainNudge, brainSection, brainTools, isBrainCapture, sharesWork } from './lib.ts'
+
+test('Company Brain: found only when the person has connected it, by its readable name', () => {
+  assert.equal(brainTools(['Bash', 'mcp__engage__list_segments']), undefined)
+  const both = brainTools(['mcp__da69a900-dce5-40d9-931b-659f381ff594__brain_ask', 'mcp__company-brain-cloud__brain_ask',
+    'mcp__da69a900-dce5-40d9-931b-659f381ff594__brain_department_capture', 'mcp__company-brain-cloud__brain_department_capture',
+    'mcp__company-brain-cloud__brain_capture_context'])!
+  assert.deepEqual(both, { capture: 'mcp__company-brain-cloud__brain_department_capture', ownerCapture: 'mcp__company-brain-cloud__brain_capture_context', ask: 'mcp__company-brain-cloud__brain_ask' })
+  assert.deepEqual(brainTools(['mcp__11111111-aaaa-bbbb-cccc-222222222222__brain_department_capture']), { capture: 'mcp__11111111-aaaa-bbbb-cccc-222222222222__brain_department_capture' })
+  assert.ok(isBrainCapture('mcp__company-brain-cloud__brain_department_capture') && isBrainCapture('mcp__x__brain_capture_context'))
+  assert.ok(!isBrainCapture('mcp__x__brain_capture_status') && !isBrainCapture('mcp__x__brain_ask'))
+  const section = brainSection(both)
+  for (const t of Object.values(both)) assert.ok(section.includes(t))
+  assert.match(section, /Never a key or password/)
+  assert.match(brainNudge(both), /still in flight/)
+  assert.doesNotMatch(brainSection({ capture: 'mcp__x__brain_department_capture' }), /Before you change/) // no ask tool, no ask line
+})
+
+test('Company Brain: work that reaches colleagues is a push, a pull request or a deploy, not a mention of one', () => {
+  for (const c of ['git push', 'cd app && git push origin main', 'git -C ~/code/app push -q', 'gh pr create --fill', 'gh pr merge 12 --squash', './deploy.sh prod', 'npm run deploy', 'wrangler deploy'])
+    assert.ok(sharesWork(c), c)
+  for (const c of ['git status', 'git commit -m "push the fix later"', 'grep -n deploy README.md', 'echo "git push"', "cat <<'EOF'\ngit push\nEOF", 'gh pr view 12', 'gh pr list'])
+    assert.ok(!sharesWork(c), c)
+})
+

@@ -156,3 +156,42 @@ test('a compaction keeps the conversation and drops old tool output', async () =
   for (let i = 0; i < 100 && !existsSync(join(m.home, '.local', 'state', 'machau-mod', 'shrunk')); i++) await new Promise(r => setTimeout(r, 100))
   assert.equal(readFileSync(join(m.home, '.local', 'state', 'machau-mod', 'shrunk'), 'utf8').trim(), 'sess-1')
 })
+
+test('with the Company Brain connected: Claude is told about it, and reminded once after work is pushed', async () => {
+  const m = await load()
+  const none = await m.call('prompt.compose', { tools: ['Bash', 'Read'] }, { sections: [] })
+  assert.deepEqual((none.sections as unknown[]).length, 0) // not connected: nothing is said
+  await m.call('tool.call', { tool: 'Bash', command: 'git push' }, bash)
+  await m.call('turn.complete', { reason: 'answer', answer: 'Pushed.' }, {})
+  assert.equal(m.sent.length, 0) // and nothing is asked
+  const tools = ['Bash', 'mcp__company-brain-cloud__brain_ask', 'mcp__company-brain-cloud__brain_department_capture', 'mcp__company-brain-cloud__brain_capture_context']
+  const composed = await m.call('prompt.compose', { tools }, { sections: [] })
+  const section = (composed.sections as { id: string; text: string }[]).find(x => x.id === 'machau-mod:company-brain')!
+  assert.match(section.text, /mcp__company-brain-cloud__brain_department_capture/)
+  // an edit alone is not shared work
+  await m.call('tool.call', { tool: 'Edit', file_path: '/x/a.ts' }, {})
+  await m.call('turn.complete', { reason: 'answer', answer: 'Edited.' }, {})
+  assert.equal(m.sent.length, 0)
+  // pushed, no note: one reminder
+  await m.call('tool.call', { tool: 'Bash', command: 'git commit -m fix && git push' }, bash)
+  await m.call('turn.complete', { reason: 'answer', answer: 'Pushed.' }, {})
+  assert.equal(m.sent.length, 1)
+  assert.match(m.sent[0], /Company Brain \(machau-mod\).*still in flight/)
+  await m.call('turn.complete', { reason: 'answer', answer: 'still in flight' }, {})
+  assert.equal(m.sent.length, 1) // not asked again for the same push
+  // pushed and noted in the same turn: no reminder
+  await m.call('tool.call', { tool: 'Bash', command: 'gh pr merge 4 --squash' }, bash)
+  await m.call('tool.call', { tool: 'mcp__company-brain-cloud__brain_department_capture', content: 'x' }, { result: { capture_id: 'c1' } })
+  await m.call('turn.complete', { reason: 'answer', answer: 'Merged and noted.' }, {})
+  assert.equal(m.sent.length, 1)
+  // an owner sent to the other tool is not a refusal; a person with no department is, and reminders stop
+  await m.call('tool.call', { tool: 'mcp__company-brain-cloud__brain_department_capture', content: 'x' }, { isError: true, text: 'department_capture_requires_member_identity' })
+  await m.call('tool.call', { tool: 'Bash', command: 'git push' }, bash)
+  await m.call('turn.complete', { reason: 'answer', answer: 'Pushed.' }, {})
+  assert.equal(m.sent.length, 2)
+  await m.call('tool.call', { tool: 'mcp__company-brain-cloud__brain_department_capture', content: 'x' }, { isError: true, text: 'A principal or requested department is not permitted' })
+  await m.call('tool.call', { tool: 'Bash', command: 'git push' }, bash)
+  await m.call('turn.complete', { reason: 'answer', answer: 'Pushed.' }, {})
+  assert.equal(m.sent.length, 2)
+})
+

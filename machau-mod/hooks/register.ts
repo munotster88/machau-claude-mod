@@ -1,6 +1,6 @@
 import type { Register } from 'claude-code'
 import {
-  CAPACITY, KEEP_ON_SHRINK, ON_DEMAND_INDEX, PLAN_NONE, ROUTED_TYPES, ROUTE_LABELS, SIZE_NUDGE, VERSION, WRAP_TOOL, asksOverride, asksShrink, briefFor,
+  CAPACITY, KEEP_ON_SHRINK, brainNudge, brainSection, brainTools, isBrainCapture, sharesWork, type BrainTools, ON_DEMAND_INDEX, PLAN_NONE, ROUTED_TYPES, ROUTE_LABELS, SIZE_NUDGE, VERSION, WRAP_TOOL, asksOverride, asksShrink, briefFor,
   capacityDeny, chromeDeny, decide, hasLine, hasLiveVerdict, holdReason, isClaudeInChrome, isDeployish, isPlaywright, lastNumberFor, liveClaim,
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
@@ -23,6 +23,7 @@ const DEFAULTS = {
   smartShrink: true, // a shrink keeps every word between the person and Claude and drops only old tool work
   autoShrink: true, // between tasks, past 300k tokens, shrink without asking when it removes 40% and 100k tokens
   capacityGate: true, // a session or helper start is held when the computer has no room left; fails open
+  brainCapture: true, // with the Company Brain connected: ask it before changing shared work, save one note per finished task
 }
 type Switches = typeof DEFAULTS
 
@@ -96,6 +97,10 @@ export const register: Register = on => {
   let shrunkHere = false
   let reopenChecked = false
   let wrappedThisTurn = false
+  // Company Brain: its tools in this session (none: not connected), work shared since the last note, and whether the brain refused this person.
+  let brain: BrainTools | undefined
+  let sharedSinceNote = 0
+  let brainRefused = false
   // Plan tick: the task list as last sent, and tool calls since it moved.
   let plan = PLAN_NONE
   // Context trim: connector instructions held back, and which loop already got which one.
@@ -190,6 +195,15 @@ export const register: Register = on => {
     let r = await next(call)
     if (r.deny !== undefined) return r
     if (tool === WRAP_TOOL && e.agentId === undefined) wrappedThisTurn = true
+    if (isBrainCapture(tool)) {
+      // A saved note clears the count. A refusal that names the person's identity (an owner using the member tool is sent to
+      // the other one, so only a missing department counts) stops the reminders for this session.
+      if (!r.isError) sharedSinceNote = 0
+      else if (/department|member_access_off|not permitted/i.test(String(r.text ?? '')) && !/requires_member_identity/.test(String(r.text ?? ''))) {
+        brainRefused = true
+        void record($, 'brainCapture', { refused: String(r.text ?? '').slice(0, 120) })
+      }
+    } else if (brain && tool === 'Bash' && !r.isError && sharesWork(String((e as { command?: unknown }).command ?? ''))) sharedSinceNote++
 
     if ((await sw($)).planTick && e.agentId === undefined) {
       const t = planTick(plan, tool, e)
@@ -298,6 +312,11 @@ export const register: Register = on => {
         return nudge('liveGuard', sentence, LIVE_NUDGE(sentence))
       }
     }
+    if (set.brainCapture && brain && !brainRefused && sharedSinceNote > 0) {
+      const shared = sharedSinceNote
+      sharedSinceNote = 0 // one reminder per piece of shared work, whatever Claude answers
+      return nudge('brainCapture', { reminded: true, shared }, brainNudge(brain))
+    }
     if (set.sessionSize) {
       const id = await $.session.id().catch(() => '')
       if (!markLoaded) {
@@ -323,14 +342,23 @@ export const register: Register = on => {
 
   on('prompt.compose', async ($, e, next) => {
     const r = await next(e)
-    if (!(await sw($)).contextTrim) return r
-    const offered = ON_DEMAND_INDEX.filter(([key]) => e.tools.some(t => (key.endsWith('__') ? t.startsWith(key) : t === key)))
-    if (offered.length === 0) return r
-    const text = [
-      'Tools available on demand (not preloaded; load with ToolSearch, e.g. "select:Artifact", before first use):',
-      ...offered.map(([, line]) => `- ${line}`),
-    ].join('\n')
-    return { sections: [...r.sections, { id: 'machau-mod:on-demand', text, scope: 'session' as const }] }
+    const set = await sw($)
+    let sections = r.sections
+    if (set.brainCapture) {
+      brain = brainTools(e.tools)
+      if (brain) sections = [...sections, { id: 'machau-mod:company-brain', text: brainSection(brain), scope: 'session' as const }]
+    }
+    if (set.contextTrim) {
+      const offered = ON_DEMAND_INDEX.filter(([key]) => e.tools.some(t => (key.endsWith('__') ? t.startsWith(key) : t === key)))
+      if (offered.length > 0) {
+        const text = [
+          'Tools available on demand (not preloaded; load with ToolSearch, e.g. "select:Artifact", before first use):',
+          ...offered.map(([, line]) => `- ${line}`),
+        ].join('\n')
+        sections = [...sections, { id: 'machau-mod:on-demand', text, scope: 'session' as const }]
+      }
+    }
+    return sections === r.sections ? r : { sections }
   })
 
   on('prompt.attachment', async ($, e, next) => {
