@@ -14,7 +14,7 @@ jobs:
         with:
           node-version: 24
       - name: The mod's own tests, on this computer's real shell
-        run: node --test machau-mod/hooks/lib.test.ts machau-mod/hooks/host.test.ts
+        run: node --test machau-mod/hooks/lib.test.ts machau-mod/hooks/host.test.ts machau-mod/hooks/register.test.ts
       - name: Claude's own check of the plugin
         run: |
           npm install -g @anthropic-ai/claude-code

@@ -56,4 +56,4 @@ Each time a piece acts it adds one line to `.local/state/machau-mod/events.jsonl
 It is public. Keys stay in each person's own Keychain.
 
 ## Changing the mod
-Logic in `machau-mod/hooks/lib.ts` with a test (`node --test machau-mod/hooks/lib.test.ts machau-mod/hooks/host.test.ts`), hook in `register.ts`, a row above, and a higher `version` in `machau-mod/.claude-plugin/plugin.json` and in `lib.ts`. Anything that touches the computer goes through `hooks/host.ts`, with a Mac and a Windows form. Run `claude plugin validate ./machau-mod` before pushing; every push is also tested on a real Mac and a real Windows machine (the Actions tab).
+Logic in `machau-mod/hooks/lib.ts` with a test (`node --test machau-mod/hooks/*.test.ts`), hook in `register.ts`, a row above, and a higher `version` in `machau-mod/.claude-plugin/plugin.json` and in `lib.ts`. Anything that touches the computer goes through `hooks/host.ts`, with a Mac and a Windows form. Run `claude plugin validate ./machau-mod` before pushing; every push is also tested on a real Mac and a real Windows machine (the Actions tab).
