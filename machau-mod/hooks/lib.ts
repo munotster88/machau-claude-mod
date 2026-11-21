@@ -272,3 +272,319 @@ export const routeId = (route: Route) => ROUTE_ID[route]
 export const ROUTED_TYPES = new Set(['general-purpose', 'claude'])
 export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
+
+// ---------- version ----------
+export const VERSION = '1.1.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+
+// ---------- which computer ----------
+// chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
+// to it, and the default of the piece that refuses Playwright, depend on the computer.
+export const chromeDeny = (mac: boolean) =>
+  'House rule: Claude in Chrome is not used here (it is unreliable). ' +
+  (mac ? 'For the signed-in Chrome use `chrome.sh`; for anything else use the built-in browser (mcp__Claude_Browser__*).' : 'Use the built-in browser (mcp__Claude_Browser__*).')
+export const playwrightDeny = (mac: boolean) =>
+  'House rule: Playwright is not used here. It opens a new, blank Chrome window with none of the sign-ins. ' +
+  (mac ? 'For a site that needs a sign-in use `chrome.sh open URL` (a background tab in the real Chrome; then `text`, `js`, `click`). ' : '') +
+  'For local previews, public pages, screenshots and resizing use the built-in browser (mcp__Claude_Browser__*, ToolSearch "+Claude_Browser")' +
+  (mac ? '.' : '; for a site that needs a sign-in, open its sign-in page there and ask the person to sign in.')
+/** Defaults that differ on Windows: with no chrome.sh there, Playwright is left alone unless the person switches the piece on. */
+export const osDefaults = (os: string): { noBlankChrome?: boolean } => (os === 'windows' ? { noBlankChrome: false } : {})
+
+// ---------- what the person typed ----------
+/** What the person actually typed, without the blocks the app adds around it; '' when nothing is left. */
+export const plainPrompt = (text: string) =>
+  text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ')
+    .replace(/<([a-z-]+)>[\s\S]*?<\/\1>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+// ---------- session size ----------
+// Long sessions are slower, dearer and forget more. Past 300k tokens, between tasks, the session is asked to save its
+// state; the person's "shrink this session" then shortens the history in place.
+export const SIZE_FIRST = 300_000
+export const SIZE_STEP = 200_000
+/** The size mark a session has just passed and was not told about yet, or undefined. */
+export function sizeMark(tokens: number, lastMark: number): number | undefined {
+  if (tokens < SIZE_FIRST) return undefined
+  const mark = SIZE_FIRST + Math.floor((tokens - SIZE_FIRST) / SIZE_STEP) * SIZE_STEP
+  return mark > lastMark ? mark : undefined
+}
+export const asksShrink = (text: string) => /^\s*(?:yes[, ]+)?(?:shrink|compact)(?: this| the)? session\b/i.test(text)
+export const SIZE_NUDGE = (tokens: number) =>
+  `Session size (machau-mod): this session now carries about ${Math.round(tokens / 1000)}k tokens. Big sessions are slower, ` +
+  "cost more and forget more. If a task is in flight, ignore this and carry on. Otherwise: write this session's working " +
+  'state (open tasks, decisions, names, what is next) into the project\'s state file (CURRENT.md if it has one, otherwise a ' +
+  'short notes file you name in your reply), then tell the person in one line that the state is saved and that replying ' +
+  '"shrink this session" shortens its history in place. Do not move them to a new session for this.'
+export const KEEP_ON_SHRINK =
+  "Keep: every open or waiting task and its next step, the person's decisions in their own words, names of people and " +
+  'sessions, what was deployed and what is not live yet, and where the working state is written.'
+/** A marker file's lines: is this exact line there, and the last number saved against a key ("<key> <number>" lines). */
+export const hasLine = (file: string, line: string) => file.split(/\r?\n/).some(l => l.trim() === line)
+export const lastNumberFor = (file: string, key: string) =>
+  file.split(/\r?\n/).reduce((n, l) => { const [k, v] = l.trim().split(' '); return k === key && Number(v) > 0 ? Number(v) : n }, 0)
+
+// ---------- smart shrink ----------
+// About 90% of a long session is tool calls and their output; what the person and Claude said to each other is about 10%
+// (measured on real sessions). So a shrink keeps every word between them, keeps the last few turns whole, and turns each
+// older batch of tool work into a one-line receipt. Nothing of the conversation is summarised away.
+export type Msg = {
+  role: 'user' | 'assistant'
+  text: string
+  toolUses: readonly { name?: string; input?: unknown; isError?: boolean }[]
+  toolResults?: readonly unknown[]
+  handle?: string
+}
+export const SHRINK_KEEP_TURNS = 3
+const isPrompt = (m: Msg) => m.role === 'user' && m.text.trim() !== '' && !(m.toolResults && m.toolResults.length > 0)
+const size = (m: Msg) => m.text.length + JSON.stringify(m.toolUses ?? []).length + JSON.stringify(m.toolResults ?? []).length
+
+function what(u: { name?: string; input?: unknown }): string {
+  const i = (u.input ?? {}) as { description?: unknown; file_path?: unknown; query?: unknown; url?: unknown; skill?: unknown }
+  const hint = [i.description, i.file_path, i.query, i.url, i.skill].find(x => typeof x === 'string' && x !== '') as string | undefined
+  const name = String(u.name ?? 'tool').replace(/^mcp__/, '').replace(/^[0-9a-f-]{20,}__/, '')
+  return hint ? `${name}: ${hint.replace(/\s+/g, ' ').slice(0, 70)}` : name
+}
+
+function receipt(uses: readonly { name?: string; input?: unknown; isError?: boolean }[]): string {
+  const failed = uses.filter(u => u.isError).length
+  const seen: string[] = []
+  for (const u of uses) {
+    const w = what(u)
+    if (!seen.includes(w)) seen.push(w)
+  }
+  const shown = seen.slice(0, 12).join('; ')
+  return `[machau-mod shrink: ${uses.length} tool call${uses.length === 1 ? '' : 's'} and the output were removed here${failed ? ` (${failed} failed)` : ''}. They were: ${shown}${seen.length > 12 ? `; and ${seen.length - 12} more` : ''}. Read the file or run the command again if the output is needed.]`
+}
+
+/**
+ * The conversation after a smart shrink, or undefined when there is nothing worth removing.
+ * Messages kept as they were keep their `handle` (the engine's own, whole); rewritten ones are built from text only.
+ */
+export function smartShrink(messages: readonly Msg[], keepTurns = SHRINK_KEEP_TURNS): { messages: Msg[]; before: number; after: number; removed: number } | undefined {
+  const prompts = messages.map((m, i) => (isPrompt(m) ? i : -1)).filter(i => i >= 0)
+  if (prompts.length <= keepTurns) return undefined
+  const cut = prompts[prompts.length - keepTurns] // the last few turns, from this prompt on, stay whole
+  const out: Msg[] = []
+  let pending: { name?: string; input?: unknown; isError?: boolean }[] = []
+  let removed = 0
+  const push = (m: Msg) => {
+    const last = out[out.length - 1]
+    // Two messages from the same side in a row are joined, so the roles keep alternating.
+    if (last && last.role === m.role && !last.handle && !m.handle) out[out.length - 1] = { ...last, text: `${last.text}\n\n${m.text}` }
+    else if (last && last.role === m.role) out[out.length - 1] = { role: m.role, text: `${last.text}\n\n${m.text}`, toolUses: [] }
+    else out.push(m)
+  }
+  const flush = () => {
+    if (pending.length === 0) return
+    push({ role: 'assistant', text: receipt(pending), toolUses: [] })
+    removed += pending.length
+    pending = []
+  }
+  for (const m of messages.slice(0, cut)) {
+    if (m.role === 'assistant') {
+      if (m.toolUses.length === 0) {
+        flush()
+        push(m) // a plain reply: kept whole, as the engine has it
+      } else {
+        if (m.text.trim()) { flush(); push({ role: 'assistant', text: m.text, toolUses: [] }) }
+        pending.push(...m.toolUses)
+      }
+    } else if (isPrompt(m)) {
+      flush()
+      push(m) // what the person said: kept whole
+    } else if (m.text.trim()) {
+      flush()
+      push({ role: 'user', text: m.text, toolUses: [] }) // text that rode along with tool results
+    }
+  }
+  flush()
+  if (removed === 0) return undefined
+  const note = `[machau-mod shrink: this session's history was shortened in place. Everything the person and Claude said to each other is kept word for word, and the last ${keepTurns} turns are whole. Older tool calls and their output were replaced by one-line receipts.]`
+  if (out[0]?.role === 'user') out[0] = { role: 'user', text: `${note}\n\n${out[0].text}`, toolUses: [] }
+  else out.unshift({ role: 'user', text: note, toolUses: [] })
+  const tail = messages.slice(cut)
+  // The tail starts with the person's prompt; if the shortened part also ends on their side, a one-word bridge keeps the order legal.
+  if (out[out.length - 1].role === 'user') out.push({ role: 'assistant', text: '(continuing)', toolUses: [] })
+  const all = [...out, ...tail]
+  return { messages: all, before: messages.reduce((n, m) => n + size(m), 0), after: all.reduce((n, m) => n + size(m), 0), removed }
+}
+
+// ---------- automatic shrink ----------
+// A shrink makes sense when it removes a lot and the session is between tasks. It costs one fresh write of the smaller
+// history; after that every reply carries less, so it pays back within a few replies. Sizes are characters (about 4 per token).
+export const AUTO_MIN_SAVED = 400_000 // about 100k tokens
+export const AUTO_MAX_KEPT = 0.6 // the shrink must remove at least 40%
+export const worthShrinking = (before: number, after: number) => before - after >= AUTO_MIN_SAVED && after <= before * AUTO_MAX_KEPT
+
+// ---------- plan tick ----------
+// The app shows a task list under Claude's message, and Claude must tick each step itself (update_plan advance).
+// Measured over 5 days of real sessions, plans of 3+ steps that ran 10+ tool calls: Sonnet never ticked until the end
+// in 40 of 44, Opus in 43 of 96. A list that ticks all at once at the end tells the person nothing while the work runs.
+// So the mod counts tool calls since the list last moved and says so once it is stale.
+export type PlanState = { steps: string[]; current: number; since: number; noted: number }
+export const PLAN_NONE: PlanState = { steps: [], current: -1, since: 0, noted: 0 }
+export const PLAN_STALE = 8 // tool calls on one step before the first reminder
+export const PLAN_AGAIN = 12 // and between reminders after that
+const PLAN_TOOL = 'mcp__ccd_turn__update_plan'
+export const WRAP_TOOL = 'mcp__ccd_turn__wrap_up'
+
+/** One tool call by the session itself: the new state, and a reminder when a step has shown as running for too long. */
+export function planTick(s: PlanState, tool: string, args: unknown): { state: PlanState; note?: string } {
+  if (tool === WRAP_TOOL) return { state: PLAN_NONE }
+  if (tool === PLAN_TOOL) {
+    const a = (args ?? {}) as { items?: unknown; advance?: unknown; done?: unknown; start?: unknown }
+    if (Array.isArray(a.items)) {
+      const items = a.items as { content?: unknown; status?: unknown }[]
+      return { state: { steps: items.map(i => String(i?.content ?? '')), current: items.findIndex(i => i?.status === 'in_progress'), since: 0, noted: 0 } }
+    }
+    let current = s.current
+    if (typeof a.start === 'number') current = a.start - 1
+    else if (a.advance === true) current = s.current + 1 < s.steps.length ? s.current + 1 : -1
+    return { state: { ...s, current, since: 0, noted: 0 } }
+  }
+  const since = s.since + 1
+  // The last step has nothing after it to move to (the wrap-up ticks it), so only earlier steps are reminded.
+  const stale = s.current >= 0 && s.current < s.steps.length - 1 && since >= PLAN_STALE && (s.noted === 0 || since - s.noted >= PLAN_AGAIN)
+  if (!stale) return { state: { ...s, since } }
+  const note =
+    `Task list (machau-mod): the person follows your progress on the list under your message, and step ${s.current + 1} of ${s.steps.length} ` +
+    `("${s.steps[s.current].slice(0, 80)}") has shown as running for ${since} tool calls. If it is finished, tick it now: send ` +
+    `${PLAN_TOOL} {"advance": true} together with your next tool call, or {"done": [...], "start": n} if you are several steps on. ` +
+    'A list that is ticked all at once at the end tells them nothing while the work runs. ' +
+    'If the step really is still running, carry on; if the plan itself has changed, send the new list.'
+  return { state: { ...s, since, noted: since }, note }
+}
+
+// ---------- capacity check ----------
+// Five code sessions started at once hung a 16 GB MacBook. Before a session or helper starts, the mod reads the
+// computer's real state (host.ts readMachine) and holds a start it cannot carry. It fails open: no reading in time,
+// or one it cannot parse, allows the start.
+export const CAPACITY = {
+  // Footprints measured on a 16 GB MacBook: an idle session engine with its connectors is about 0.7 GB; a code session
+  // adds a build, a dev server and a browser, about 3 GB.
+  light_gb: 0.7, heavy_gb: 3.0,
+  // Memory kept for the person's own apps and the system: a quarter of RAM, never under 4 GB.
+  reserve_frac: 0.25, reserve_min_gb: 4.0,
+  // A running build is usually still growing: this much extra headroom for each one already running.
+  ramp_gb: 1.5,
+  full_free_pct: 20, wait_free_pct: 35,
+  full_swap_frac: 0.25, wait_swap_frac: 0.08,
+  full_load: 1.2, wait_load: 0.8,
+  cores_per_heavy: 3,
+  stagger_ms: 90_000, // two session starts closer than this are refused: started together, their builds pile up
+  override_ms: 600_000,
+  // Windows: the Mac numbers above were never measured there (its page file and its "free" figure behave differently),
+  // so only the plain case is held: under a tenth of memory free. Every reading is logged, so finer rules can follow.
+  windows_full_free_pct: 10,
+  timeout_ms: { mac: 2500, windows: 8000 } as Record<string, number>,
+}
+export type Reading = { os: 'mac' | 'windows'; ram_gb: number; cores: number; free_pct: number | null; swap_gb: number; load1: number; heavy_procs: number }
+export type Verdict = { verdict: 'ok' | 'wait' | 'full'; reason: string; light_fit: number; heavy_fit: number }
+
+const HEAVY_PROC =
+  /(next[ -]|next\/dist|vite\b|webpack|rollup|esbuild|tsc\b|turbo\b|npm (?:run )?(?:build|dev|start)|pnpm (?:run )?(?:build|dev)|yarn (?:build|dev)|nuxt|astro (?:dev|build)|ms-playwright|--headless|--remote-debugging-port|chrome-headless|Chromium)/i
+const WORKER_PROC = /jest-worker|processChild|--type=(?:renderer|gpu-process|utility)|Helper/i
+/** The real node or browser binary, counted once: not the shell or npm wrappers around it, nor its worker children. */
+const isBinary = (row: string) => {
+  const exe = (row.split(' ', 1)[0].split('/').pop() ?? '').toLowerCase()
+  return ['node', 'chromium', 'chrome-headless-shell'].includes(exe) || (exe === 'google' && row.includes('--remote-debugging-port'))
+}
+
+/** A Mac's reading from host.ts MAC_READ, or undefined when it cannot be read. */
+export function parseMacReading(out: string): Reading | undefined {
+  const [head, ps = ''] = out.split('@@ps')
+  const num = (re: RegExp) => { const m = re.exec(head); return m ? Number(m[1]) : NaN }
+  const ram = num(/^ram (\d+)/m) / 2 ** 30
+  const cores = num(/^cores (\d+)/m)
+  if (!(ram > 0) || !(cores > 0)) return undefined
+  const free = num(/free percentage:\s*(\d+)%/i)
+  const swap = num(/^swap .*used = ([\d.]+)M/m)
+  const load = num(/^load \{?\s*([\d.]+)/m)
+  let heavy = 0
+  for (const row of ps.split('\n')) {
+    if (!row.trim() || row.includes('Claude.app') || (row.includes('/claude-code/') && /\/claude(\s|$)/.test(row))) continue
+    if (HEAVY_PROC.test(row) && isBinary(row.trim()) && !WORKER_PROC.test(row)) heavy++
+  }
+  return { os: 'mac', ram_gb: Math.round(ram * 10) / 10, cores, free_pct: Number.isNaN(free) ? null : free, swap_gb: Number.isNaN(swap) ? 0 : Math.round((swap / 1024) * 100) / 100, load1: Number.isNaN(load) ? 0 : load, heavy_procs: heavy }
+}
+
+/** A Windows reading from host.ts WIN_READ, or undefined when it cannot be read. */
+export function parseWindowsReading(out: string): Reading | undefined {
+  const num = (re: RegExp) => { const m = re.exec(out); return m ? Number(m[1]) : NaN }
+  const ramKb = num(/^ram_kb (\d+)/m)
+  const freeKb = num(/^free_kb (\d+)/m)
+  const cores = num(/^cores (\d+)/m)
+  if (!(ramKb > 0) || Number.isNaN(freeKb)) return undefined
+  return { os: 'windows', ram_gb: Math.round((ramKb / 2 ** 20) * 10) / 10, cores: cores > 0 ? cores : 1, free_pct: Math.round((freeKb / ramKb) * 100), swap_gb: 0, load1: 0, heavy_procs: 0 }
+}
+
+/** Pure: a reading in, a verdict out. */
+export function decide(m: Reading, c = CAPACITY): Verdict {
+  if (m.os === 'windows') {
+    const free = m.free_pct ?? 50
+    return free < c.windows_full_free_pct
+      ? { verdict: 'full', reason: `only ${free}% of memory is free`, light_fit: 0, heavy_fit: 0 }
+      : { verdict: 'ok', reason: `${free}% of memory is free`, light_fit: 1, heavy_fit: 1 }
+  }
+  const { ram_gb: ram, cores, free_pct: free } = m
+  const full: string[] = []
+  const wait: string[] = []
+  if (free !== null) {
+    if (free < c.full_free_pct) full.push(`only ${free}% of memory is free`)
+    else if (free < c.wait_free_pct) wait.push(`memory is getting tight (${free}% free)`)
+  }
+  if (m.swap_gb > c.full_swap_frac * ram) full.push(`${m.swap_gb.toFixed(1)} GB of swap is in use`)
+  else if (m.swap_gb > c.wait_swap_frac * ram) wait.push(`${m.swap_gb.toFixed(1)} GB of swap is in use`)
+  if (m.load1 > c.full_load * cores) full.push(`the processor is saturated (load ${m.load1} on ${cores} cores)`)
+  else if (m.load1 > c.wait_load * cores) wait.push(`the processor is busy (load ${m.load1} on ${cores} cores)`)
+  const avail = (ram * (free ?? 50)) / 100
+  const spare = avail - Math.max(c.reserve_min_gb, c.reserve_frac * ram) - c.ramp_gb * m.heavy_procs
+  let light = Math.max(0, Math.floor(spare / c.light_gb))
+  const heavyCap = Math.max(1, Math.floor(cores / c.cores_per_heavy))
+  let heavy = Math.max(0, Math.min(Math.floor(spare / c.heavy_gb), heavyCap - m.heavy_procs))
+  let verdict: Verdict['verdict']
+  let reasons: string[]
+  if (full.length > 0 || light === 0) {
+    verdict = 'full'
+    reasons = full.length > 0 ? full : ['no memory is left beyond what your own apps need']
+  } else if (wait.length > 0 || heavy === 0) {
+    verdict = 'wait'
+    reasons = wait.length > 0 ? wait : [`${m.heavy_procs} builds or browsers are already running, room for no more heavy work`]
+  } else {
+    verdict = 'ok'
+    reasons = ['plenty of room']
+  }
+  if (verdict !== 'ok') heavy = 0
+  if (verdict === 'full') light = 0
+  return { verdict, reason: reasons.join('; '), light_fit: light, heavy_fit: heavy }
+}
+
+const HEAVY_WORK = /\b(build|builds|implement|fix|refactor|edit|commit|pull request|\bPR\b|npm|pnpm|yarn|dev server|test|tests|deploy|migrate|code|feature|bug|ui|frontend)\b/i
+/** A start is heavy (builds code) unless it is plainly read-only: a brief with no building words, or a known read-only helper. */
+export const startKind = (tool: string, input: unknown): 'light' | 'heavy' => {
+  const i = (input ?? {}) as { prompt?: unknown; subagent_type?: unknown }
+  if (!tool.includes('start_session')) return /^(Explore|Plan|claude-code-guide|web-fetch|statusline-setup)$/.test(String(i.subagent_type ?? '')) ? 'light' : 'heavy'
+  return HEAVY_WORK.test(String(i.prompt ?? '')) ? 'heavy' : 'light'
+}
+/**
+ * Why this start is held, or undefined to let it go. A new session is held when the computer is full, when it would
+ * build code and there is room only for light work, or when another session started under 90 seconds ago. A helper
+ * shares the session's process (cheap), so only a full computer holds it.
+ */
+export function holdReason(d: Verdict, kind: 'light' | 'heavy', isSession: boolean, msSinceLastStart: number, c = CAPACITY): string | undefined {
+  if (d.verdict === 'full') return `full: ${d.reason}`
+  if (!isSession) return undefined
+  if (kind === 'heavy' && d.verdict === 'wait') return `wait (light sessions only): ${d.reason}`
+  if (kind === 'heavy' && d.heavy_fit < 1) return `no room for heavy work: ${d.reason}`
+  if (msSinceLastStart < c.stagger_ms) return `stagger: another session started less than ${c.stagger_ms / 1000}s ago; wait ${Math.ceil((c.stagger_ms - msSinceLastStart) / 1000)}s so its load shows`
+  return undefined
+}
+export const capacityDeny = (why: string, kind: string) =>
+  `Capacity check (machau-mod): this computer cannot take a new ${kind} start now. ${why}. ` +
+  'Do not retry in a loop and do not start it another way: note the task (it stays on your list), carry on with other work, ' +
+  'and try the start again in a few minutes. ' +
+  'Only the person\'s own direct word overrides this: when they type "start it anyway", the check steps aside for 10 minutes. Never type that for them.'
+/** The person's own words that set the check aside for 10 minutes. */
+export const asksOverride = (text: string) => /\b(?:start (?:it|them|that|this)? ?anyway|override (?:the )?capacity)\b/i.test(text)

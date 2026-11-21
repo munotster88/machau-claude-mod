@@ -10,7 +10,7 @@
     {
       "name": "machau-mod",
       "source": "./machau-mod",
-      "description": "Guards and savings for every Claude session: secret mask, no blank logged-out Chrome, smaller session start, right-sized helper models"
+      "description": "Guards and savings for every Claude session, on Mac and Windows: secret mask, smaller session start, right-sized helper models, task-list ticks, session shrink, capacity check"
     }
   ]
 }

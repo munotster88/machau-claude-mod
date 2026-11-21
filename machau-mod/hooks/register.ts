@@ -1,8 +1,11 @@
 import type { Register } from 'claude-code'
 import {
-  ON_DEMAND_INDEX, ROUTED_TYPES, ROUTE_LABELS, briefFor, hasLiveVerdict, isClaudeInChrome, isDeployish, isPlaywright, liveClaim,
-  maskSecrets, routeFor, routeId, serversIn, shouldDefer, trimInstructions, trimSkills, trimToolList,
+  CAPACITY, KEEP_ON_SHRINK, ON_DEMAND_INDEX, PLAN_NONE, ROUTED_TYPES, ROUTE_LABELS, SIZE_NUDGE, VERSION, WRAP_TOOL, asksOverride, asksShrink, briefFor,
+  capacityDeny, chromeDeny, decide, hasLine, hasLiveVerdict, holdReason, isClaudeInChrome, isDeployish, isPlaywright, lastNumberFor, liveClaim,
+  maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
+  sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
 } from './lib.ts'
+import { appendHome, detect, readHome, readMachine, within, type Os, type Run } from './host.ts'
 
 // Machau's Claude mod: one small piece per recurring problem, each with a switch.
 // Add a piece: write its logic in lib.ts with a test, hook it here, add a switch and a README line.
@@ -15,40 +18,62 @@ const DEFAULTS = {
   secretMask: true, // keys and passwords in command output are masked before Claude and the transcript see them
   contextTrim: true, // heavy tools load on demand; tool names, connector instructions and skills lists are shortened
   modelRouting: true, // a helper started without a model gets Opus, Sonnet or Haiku by what its work needs
+  planTick: true, // a task-list step that has shown as running for 8 tool calls gets a reminder to tick it
+  sessionSize: true, // past 300k tokens, between tasks: save the working state; "shrink this session" shortens the history in place
+  smartShrink: true, // a shrink keeps every word between the person and Claude and drops only old tool work
+  autoShrink: true, // between tasks, past 300k tokens, shrink without asking when it removes 40% and 100k tokens
+  capacityGate: true, // a session or helper start is held when the computer has no room left; fails open
 }
 type Switches = typeof DEFAULTS
 
-// Scoreboard: every time a piece acts it writes one line to ~/.local/state/machau-mod/events.jsonl, so the monthly
-// review can see what each piece changed. Never holds a secret, and no reply text beyond the flagged sentence.
-// (A mod may not import Node's file library; it appends through one small shell command instead.)
-type Host = { process: { run: (argv: readonly string[]) => Promise<unknown> } }
-const PROFILE = 'cat "$HOME/.config/machau-mod/profile.json" 2>/dev/null || true'
+// The mod keeps three small things under the person's home folder (on Windows: under %USERPROFILE%), through host.ts:
+// their own switches (.config/machau-mod/profile.json), the scoreboard (.local/state/machau-mod/events.jsonl: one line
+// each time a piece acts, never a secret and no reply text beyond the flagged sentence), and two marker files for the
+// shrink. Mac or Windows is found once per session.
+const STATE = '.local/state/machau-mod'
+let osFound: Promise<Os> | undefined
+const os = ($: Run): Promise<Os> => (osFound ??= detect($))
+const record = ($: Run, piece: string, detail: unknown) =>
+  os($)
+    .then(o => appendHome($, o, `${STATE}/events.jsonl`, JSON.stringify({ at: new Date().toISOString(), piece, detail })))
+    .catch(() => {}) // a guard never fails a turn over its own log
 let switches: Promise<Switches> | undefined
-/** The switches for this person: the defaults, changed by their profile file if they have one. */
-const sw = ($: Host): Promise<Switches> =>
-  (switches ??= $.process
-    .run(['/bin/sh', '-c', PROFILE])
-    .then(r => {
-      const out = typeof r === 'string' ? r : String((r as { stdout?: unknown })?.stdout ?? '')
-      const own = out.trim() ? (JSON.parse(out) as { switches?: Partial<Switches> }).switches : undefined
-      return { ...DEFAULTS, ...own }
+/** The switches for this person: the defaults (a few differ on Windows), changed by their profile file if they have one. */
+const sw = ($: Run): Promise<Switches> =>
+  (switches ??= os($)
+    .then(async o => {
+      const out = await readHome($, o, '.config/machau-mod/profile.json')
+      let own: Partial<Switches> | undefined
+      try { own = out.trim() ? (JSON.parse(out.replace(/^\uFEFF/, '')) as { switches?: Partial<Switches> }).switches : undefined } catch { own = undefined }
+      void record($, 'loaded', { version: VERSION, os: o, ownSwitches: own ? Object.keys(own) : [] })
+      return { ...DEFAULTS, ...osDefaults(o), ...own }
     })
     .catch(() => DEFAULTS))
-const APPEND = 'mkdir -p "$HOME/.local/state/machau-mod" && printf "%s\\n" "$1" >> "$HOME/.local/state/machau-mod/events.jsonl"'
-const record = ($: Host, piece: string, detail: unknown) =>
-  $.process
-    .run(['/bin/sh', '-c', APPEND, 'machau-mod', JSON.stringify({ at: new Date().toISOString(), piece, detail })])
-    .catch(() => {}) // a guard never fails a turn over its own log
 
-const CHROME_DENY =
-  'House rule: Claude in Chrome is not used here (it is unreliable). For the signed-in Chrome use `chrome.sh`; ' +
-  'for anything else use the built-in browser (mcp__Claude_Browser__*).'
-
-const PLAYWRIGHT_DENY =
-  'House rule: Playwright is not used here. It opens a new, blank Chrome window with none of the sign-ins. ' +
-  'For a site that needs a sign-in use `chrome.sh open URL` (a background tab in the real Chrome, Mac only; then ' +
-  '`text`, `js`, `click`). For local previews, public pages, screenshots and resizing use the built-in browser ' +
-  '(mcp__Claude_Browser__*, ToolSearch "+Claude_Browser").'
+// Capacity check: when this session last started another, and until when the person's own word sets the check aside.
+const cap = { lastStart: 0, overrideUntil: 0 }
+/** Why this start is held, or undefined. Any failure, or no reading in time, allows the start and is logged. */
+async function capacityHold($: Run, tool: string, e: unknown, isSession: boolean): Promise<string | undefined> {
+  try {
+    if (Date.now() < cap.overrideUntil) return undefined
+    const o = await os($)
+    if (o !== 'mac' && o !== 'windows') return undefined
+    const out = await readMachine($, o, CAPACITY.timeout_ms[o])
+    const reading = o === 'mac' ? parseMacReading(out) : parseWindowsReading(out)
+    if (!reading) { void record($, 'capacityGate', { failOpen: 'no reading in time, or one that cannot be read', tool, os: o }); return undefined }
+    const d = decide(reading)
+    const kind = startKind(tool, e)
+    const why = holdReason(d, kind, isSession, Date.now() - cap.lastStart)
+    // Windows readings are all logged: its rules are not measured yet, and these lines are how they will be.
+    if (why || o === 'windows') void record($, 'capacityGate', { ...(why ? { held: why } : { allowed: d.verdict }), kind, tool, os: o, free_pct: reading.free_pct, ram_gb: reading.ram_gb })
+    if (why) return capacityDeny(why, kind)
+    if (isSession) cap.lastStart = Date.now()
+    return undefined
+  } catch (err) {
+    void record($, 'capacityGate', { failOpen: String(err).slice(0, 200), tool })
+    return undefined
+  }
+}
 
 const LIVE_NUDGE = (sentence: string) =>
   `Ship check guard (machau-mod): your reply said "${sentence}" but since the last merge, push or deploy command in this ` +
@@ -63,14 +88,72 @@ export const register: Register = on => {
   let liveAt = 0
   let nudgedFor = 0
   let shipCheckStarted = false
+  // Session size and shrink.
+  let tokensNow = 0
+  let lastMark = 0
+  let markLoaded = false
+  let shrinkAsked = false
+  let shrunkHere = false
+  let reopenChecked = false
+  let wrappedThisTurn = false
+  // Plan tick: the task list as last sent, and tool calls since it moved.
+  let plan = PLAN_NONE
   // Context trim: connector instructions held back, and which loop already got which one.
   const held: Record<string, string> = {}
   const handedOver = new Set<string>()
   const savedOnce = new Set<string>()
 
   on('tool.check', async ($, e, next) => {
-    if ((await sw($)).noClaudeInChrome && isClaudeInChrome(e.tool)) return { decision: 'deny', reason: CHROME_DENY }
-    if ((await sw($)).noBlankChrome && isPlaywright(String(e.tool))) return { decision: 'deny', reason: PLAYWRIGHT_DENY }
+    if ((await sw($)).noClaudeInChrome && isClaudeInChrome(e.tool)) return { decision: 'deny', reason: chromeDeny((await os($)) === 'mac') }
+    if ((await sw($)).noBlankChrome && isPlaywright(String(e.tool))) return { decision: 'deny', reason: playwrightDeny((await os($)) === 'mac') }
+    return next(e)
+  })
+
+  // What the person typed, on its way in: "shrink this session" and "start it anyway" are heard here.
+  on('prompt.submit', async ($, e, next) => {
+    // A prompt typed by the person has no origin, or human/user/sdk where the app or `claude -p` passes it in.
+    // A plugin's own nudge and another session's message are left alone.
+    const from = (e as { origin?: { kind?: string } }).origin?.kind
+    const meta = e as { command?: unknown; isMeta?: unknown; text?: unknown }
+    if (meta.command || meta.isMeta || (from !== undefined && !['human', 'user', 'sdk'].includes(from))) return next(e)
+    const said = plainPrompt(String(meta.text ?? ''))
+    wrappedThisTurn = false
+    if ((await sw($)).sessionSize && asksShrink(said)) shrinkAsked = true
+    if ((await sw($)).capacityGate && asksOverride(said)) {
+      cap.overrideUntil = Date.now() + CAPACITY.override_ms
+      void record($, 'capacityGate', { override: 'the person said so', minutes: CAPACITY.override_ms / 60_000 })
+    }
+    return next(e)
+  })
+
+  // Smart shrink: whoever starts a compaction (the person's "shrink this session", /compact, or the engine at its
+  // limit), the conversation is first reduced to what was said plus receipts for old tool work. If that alone makes it
+  // small enough, it stands as it is and nothing is summarised; if it is still large, the engine summarises the lean version.
+  const SHRUNK_ENOUGH = 600_000 // characters, roughly 150k tokens
+  on('session.compact', async ($, e, next) => {
+    if (!(await sw($)).smartShrink || e.agentId !== undefined) return next(e)
+    if (e.trigger === 'precompute') return { skip: 'machau-mod shrinks the session itself when the time comes' }
+    const lean = smartShrink(e.messages as never)
+    if (!lean) return next(e)
+    void record($, 'smartShrink', { trigger: e.trigger, before: lean.before, after: lean.after, toolCallsRemoved: lean.removed })
+    // A shrink a hook hands back may not be written into the saved session, so a reopened session can come back whole.
+    // Remember the session, and shrink it again after its first turn when it is reopened.
+    const id = await $.session.id().catch(() => '')
+    if (id && !shrunkHere) void os($).then(o => appendHome($, o, `${STATE}/shrunk`, id)).catch(() => {})
+    shrunkHere = true
+    tokensNow = 0 // the old size is stale now; the next reply reports the new one
+    if (lean.after <= SHRUNK_ENOUGH) return { messages: lean.messages as never }
+    return next({ ...e, messages: lean.messages as never })
+  })
+
+  on('session.measure', async ($, e, next) => {
+    if (e.context.tokens) tokensNow = e.context.tokens
+    if (!reopenChecked && tokensNow > 0 && (await sw($)).smartShrink) {
+      reopenChecked = true
+      const id = await $.session.id().catch(() => '')
+      const was = id ? hasLine(await readHome($, await os($), `${STATE}/shrunk`), id) : false
+      if (was && !shrunkHere && tokensNow > 200_000) shrinkAsked = true
+    }
     return next(e)
   })
 
@@ -78,11 +161,20 @@ export const register: Register = on => {
     const tool = String(e.tool)
     if ((await sw($)).noClaudeInChrome && isClaudeInChrome(tool)) {
       void record($, 'noClaudeInChrome', tool)
-      return { deny: CHROME_DENY }
+      return { deny: chromeDeny((await os($)) === 'mac') }
     }
     if ((await sw($)).noBlankChrome && isPlaywright(tool)) {
       void record($, 'noBlankChrome', tool)
-      return { deny: PLAYWRIGHT_DENY }
+      return { deny: playwrightDeny((await os($)) === 'mac') }
+    }
+
+    // Capacity check: a new session (never one the person started from a card), or a helper.
+    if ((await sw($)).capacityGate && e.agentId === undefined) {
+      const isSession = tool === 'mcp__ccd_session__start_session' && !(e as { proposal_id?: string }).proposal_id
+      if (isSession || tool === 'Agent') {
+        const held = await capacityHold($, tool, e, isSession)
+        if (held) return { deny: held }
+      }
     }
 
     // Model routing for a separate session started without a model.
@@ -95,8 +187,18 @@ export const register: Register = on => {
       call = { ...e, model: routeId(route) } as typeof e
     }
 
-    const r = await next(call)
+    let r = await next(call)
     if (r.deny !== undefined) return r
+    if (tool === WRAP_TOOL && e.agentId === undefined) wrappedThisTurn = true
+
+    if ((await sw($)).planTick && e.agentId === undefined) {
+      const t = planTick(plan, tool, e)
+      plan = t.state
+      if (t.note) {
+        void record($, 'planTick', { step: plan.current + 1, of: plan.steps.length, after: plan.since })
+        r = { ...r, context: [...(r.context ?? []), t.note] }
+      }
+    }
 
     if ((await sw($)).liveGuard) {
       tick++
@@ -122,7 +224,7 @@ export const register: Register = on => {
         .map(server => (handedOver.add(`${loop}|${server}`), held[server]))
       if (pages.length > 0) {
         void record($, 'contextTrim', { handedOver: pages.length })
-        return { ...r, context: [...(r.context ?? []), `Instructions for the connector(s) you just looked up (held back until now by machau-mod):\n\n${pages.join('\n\n')}`] }
+        r = { ...r, context: [...(r.context ?? []), `Instructions for the connector(s) you just looked up (held back until now by machau-mod):\n\n${pages.join('\n\n')}`] }
       }
     }
 
@@ -154,14 +256,62 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    if (!(await sw($)).liveGuard || e.agentId !== undefined || e.reason !== 'answer') return r
-    if (deployAt <= liveAt || nudgedFor === deployAt) return r
-    const sentence = liveClaim(e.answer)
-    if (!sentence) return r
-    nudgedFor = deployAt
-    void record($, 'liveGuard', sentence)
-    // Not awaited: a plugin's prompt runs once the session is idle, which is after this hook returns.
-    void $.prompt.submit({ text: LIVE_NUDGE(sentence) }).catch(() => {})
+    if (e.agentId !== undefined || e.reason !== 'answer') return r
+    const set = await sw($)
+    // One nudge per turn end at most. Not awaited: a plugin's prompt runs once the session is idle, after this hook returns.
+    const nudge = (piece: string, detail: unknown, text: string) => {
+      void record($, piece, detail)
+      void $.prompt.submit({ text }).catch(() => {})
+      return r
+    }
+    // Shrinks the session in place. A terminal session compacts on the call; the app and `claude -p` run on the SDK,
+    // where compaction only runs as a command. Either way the session.compact hook above does the shrinking.
+    const shrinkNow = async (why: string) => {
+      const done = (await $.session.compact({ instructions: KEEP_ON_SHRINK }).catch(err => ({ skip: String(err) }))) as { skip?: unknown } | undefined
+      let how = 'compacted'
+      if (done && done.skip) {
+        how = 'ran the compact command'
+        void ($ as unknown as { command: { run: (i: { command: string; args?: string }) => Promise<unknown> } }).command
+          .run({ command: 'compact', args: KEEP_ON_SHRINK })
+          .catch(err => record($, 'sessionSize', { shrinkFailed: String(err).slice(0, 300) }))
+      }
+      void record($, 'sessionSize', { shrink: how, why, at: tokensNow })
+    }
+    if (shrinkAsked) {
+      shrinkAsked = false
+      await shrinkNow('asked')
+      return r
+    }
+    // Automatic: only between tasks (this turn wrapped up), only when big, and only when a dry run shows it is worth it.
+    if (set.autoShrink && set.smartShrink && wrappedThisTurn && tokensNow >= 300_000) {
+      const rows = await ($ as unknown as { session: { messages: () => Promise<unknown> } }).session.messages().catch(() => undefined)
+      const lean = Array.isArray(rows) ? smartShrink(rows as never) : undefined
+      if (lean && worthShrinking(lean.before, lean.after)) {
+        await shrinkNow(`automatic: ${Math.round((1 - lean.after / lean.before) * 100)}% smaller`)
+        return r
+      }
+    }
+    if (set.liveGuard && deployAt > liveAt && nudgedFor !== deployAt) {
+      const sentence = liveClaim(e.answer)
+      if (sentence) {
+        nudgedFor = deployAt
+        return nudge('liveGuard', sentence, LIVE_NUDGE(sentence))
+      }
+    }
+    if (set.sessionSize) {
+      const id = await $.session.id().catch(() => '')
+      if (!markLoaded) {
+        markLoaded = true
+        const saved = id ? lastNumberFor(await readHome($, await os($), `${STATE}/size-marks`), id) : 0
+        if (saved > lastMark) lastMark = saved
+      }
+      const mark = sizeMark(tokensNow, lastMark)
+      if (mark !== undefined) {
+        lastMark = mark
+        if (id) void os($).then(o => appendHome($, o, `${STATE}/size-marks`, `${id} ${mark}`)).catch(() => {})
+        return nudge('sessionSize', { tokens: tokensNow }, SIZE_NUDGE(tokensNow))
+      }
+    }
     return r
   })
 
