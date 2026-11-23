@@ -266,23 +266,31 @@ test('plan tick: reminds once a step has run long, and stops when the list moves
   for (let i = 0; i < 40; i++) assert.equal(planTick(PLAN_NONE, 'Bash', {}).note, undefined) // no list, no reminder
 })
 
-const IDLE: Reading = { os: 'mac', ram_gb: 16, cores: 10, free_pct: 70, swap_gb: 0, load1: 1.5, heavy_procs: 0 }
+const IDLE: Reading = { os: 'mac', ram_gb: 16, cores: 10, free_pct: 70, swap_gb: 0, pressure: 1, load1: 1.5, heavy_procs: 0 }
 
-test('capacity: the verdict for a Mac follows memory, swap, load and running builds', () => {
+test('capacity: the verdict for a Mac follows free memory, pressure, load and running builds, not swap sitting in use', () => {
   const ok = decide(IDLE)
   assert.equal(ok.verdict, 'ok'); assert.ok(ok.heavy_fit >= 1)
-  assert.equal(decide({ ...IDLE, free_pct: 12 }).verdict, 'full')
-  assert.equal(decide({ ...IDLE, swap_gb: 6 }).verdict, 'full')
-  assert.equal(decide({ ...IDLE, load1: 9 }).verdict, 'wait')
-  assert.equal(decide({ ...IDLE, load1: 13 }).verdict, 'full')
-  assert.equal(decide({ ...IDLE, free_pct: 30 }).verdict, 'wait')
+  assert.equal(decide({ ...IDLE, free_pct: 8 }).verdict, 'full')
+  assert.equal(decide({ ...IDLE, free_pct: 17 }).verdict, 'wait')
+  assert.match(decide({ ...IDLE, free_pct: 20 }).reason, /not enough free memory for a session that builds code/) // room for light work only, said plainly
+  assert.equal(decide({ ...IDLE, free_pct: 30 }).verdict, 'ok')
+  // 1.2.1: swap that merely sits in use holds nothing (7.4 GB sat there with half the memory free and every start was held)
+  assert.equal(decide({ ...IDLE, free_pct: 50, swap_gb: 7.4 }).verdict, 'ok')
+  assert.equal(decide({ ...IDLE, pressure: 2 }).verdict, 'ok') // the warning level alone does not hold
+  assert.equal(decide({ ...IDLE, pressure: 4 }).verdict, 'full')
+  assert.equal(decide({ ...IDLE, load1: 10 }).verdict, 'ok') // a load equal to the cores is a computer in use, not in trouble
+  assert.equal(decide({ ...IDLE, load1: 16 }).verdict, 'wait')
+  assert.equal(decide({ ...IDLE, load1: 26 }).verdict, 'full')
+  assert.ok(decide({ ...IDLE, free_pct: 30 }).heavy_fit >= 1) // a 16 GB Mac with 30% free still takes a code session
   assert.ok(decide({ ...IDLE, ram_gb: 64, cores: 16 }).heavy_fit > ok.heavy_fit) // relative to the computer's size
-  assert.equal(decide({ ...IDLE, heavy_procs: 3 }).heavy_fit, 0) // 10 cores carry three builds at once
+  assert.ok(decide({ ...IDLE, heavy_procs: 3 }).heavy_fit >= 1)
+  assert.equal(decide({ ...IDLE, heavy_procs: 4 }).heavy_fit, 0) // 10 cores carry four builds at once
   assert.equal(decide({ ...IDLE, free_pct: null }).verdict, 'ok') // no memory figure: half is taken as free, the other signs still count
 })
 
 test('capacity: Windows is held only when under a tenth of memory is free', () => {
-  const w: Reading = { os: 'windows', ram_gb: 8, cores: 8, free_pct: 30, swap_gb: 0, load1: 0, heavy_procs: 0 }
+  const w: Reading = { os: 'windows', ram_gb: 8, cores: 8, free_pct: 30, swap_gb: 0, pressure: 1, load1: 0, heavy_procs: 0 }
   assert.equal(decide(w).verdict, 'ok')
   assert.equal(decide({ ...w, free_pct: 10 }).verdict, 'ok')
   assert.equal(decide({ ...w, free_pct: 9 }).verdict, 'full')
@@ -290,8 +298,8 @@ test('capacity: Windows is held only when under a tenth of memory is free', () =
 
 test('capacity: which starts are held', () => {
   const ok = decide(IDLE)
-  const wait = decide({ ...IDLE, free_pct: 30 })
-  const full = decide({ ...IDLE, free_pct: 10 })
+  const wait = decide({ ...IDLE, free_pct: 17 })
+  const full = decide({ ...IDLE, free_pct: 8 })
   const long = 10 * 60_000
   assert.equal(holdReason(ok, 'heavy', true, long), undefined)
   assert.equal(holdReason(wait, 'light', true, long), undefined) // tight: light sessions only
@@ -314,7 +322,7 @@ test('capacity: which starts are held', () => {
 test('capacity: reads a real Mac reading and a real Windows reading', () => {
   const mac = [
     'ram 17179869184', 'cores 10', 'free System-wide memory free percentage: 50%',
-    'swap total = 5120.00M  used = 4235.00M  free = 885.00M  (encrypted)', 'load { 2.25 2.36 2.07 }', '@@ps',
+    'swap total = 5120.00M  used = 4235.00M  free = 885.00M  (encrypted)', 'level 2', 'load { 2.25 2.36 2.07 }', '@@ps',
     '/Applications/Claude.app/Contents/MacOS/Claude', // the app itself is never a build
     '/bin/zsh -c npm run build', // the wrapper around a build is not counted
     'node /Users/a/app/node_modules/.bin/next build', // the build is
@@ -322,11 +330,11 @@ test('capacity: reads a real Mac reading and a real Windows reading', () => {
     '/Users/a/Library/Caches/ms-playwright/chromium-1/chrome-mac/Chromium.app/Contents/MacOS/Chromium --headless', // a test browser is
     'node /Users/a/tools/server.js', // a plain node program is not a build
   ].join('\n')
-  assert.deepEqual(parseMacReading(mac), { os: 'mac', ram_gb: 16, cores: 10, free_pct: 50, swap_gb: 4.14, load1: 2.25, heavy_procs: 2 })
+  assert.deepEqual(parseMacReading(mac), { os: 'mac', ram_gb: 16, cores: 10, free_pct: 50, swap_gb: 4.14, pressure: 2, load1: 2.25, heavy_procs: 2 })
   assert.equal(parseMacReading('nothing useful'), undefined)
   assert.equal(parseMacReading('ram 17179869184\ncores 10\nfree \nswap \nload \n@@ps\n')!.free_pct, null)
   const win = 'ram_kb 16482556\r\nfree_kb 6593022\r\ncores 12\r\n'
-  assert.deepEqual(parseWindowsReading(win), { os: 'windows', ram_gb: 15.7, cores: 12, free_pct: 40, swap_gb: 0, load1: 0, heavy_procs: 0 })
+  assert.deepEqual(parseWindowsReading(win), { os: 'windows', ram_gb: 15.7, cores: 12, free_pct: 40, swap_gb: 0, pressure: 1, load1: 0, heavy_procs: 0 })
   assert.equal(parseWindowsReading(''), undefined)
 })
 

@@ -95,7 +95,8 @@ export function appendHome($: Run, os: Os, rel: string, line: string, ms = 10_00
 const MAC_READ =
   'echo "ram $(sysctl -n hw.memsize)"; echo "cores $(sysctl -n hw.ncpu)"; ' +
   'echo "free $(memory_pressure 2>/dev/null | grep -i "free percentage")"; ' +
-  'echo "swap $(sysctl -n vm.swapusage)"; echo "load $(sysctl -n vm.loadavg)"; echo "@@ps"; ps -Ao command='
+  'echo "swap $(sysctl -n vm.swapusage)"; echo "level $(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null)"; ' +
+  'echo "load $(sysctl -n vm.loadavg)"; echo "@@ps"; ps -Ao command='
 const WIN_READ =
   '$o = Get-CimInstance Win32_OperatingSystem; $c = Get-CimInstance Win32_ComputerSystem; ' +
   'Write-Output ("ram_kb " + $o.TotalVisibleMemorySize); Write-Output ("free_kb " + $o.FreePhysicalMemory); ' +

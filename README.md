@@ -21,7 +21,7 @@ The same mod runs on both, and nothing else needs installing. It finds out which
 
 What differs on Windows:
 - `chrome.sh` does not exist there, so "No blank Chrome" is off unless you switch it on.
-- The capacity check holds a start only when under a tenth of memory is free. The finer Mac rules (swap, processor load, running builds) were measured on a Mac and are not applied on Windows yet; each check is written to the mod's log so they can be worked out.
+- The capacity check holds a start only when under a tenth of memory is free. The finer Mac rules (memory pressure, processor load, running builds) were measured on a Mac and are not applied on Windows yet; each check is written to the mod's log so they can be worked out.
 - "Home folder" below means `C:\Users\<you>`.
 
 ## Install (once)

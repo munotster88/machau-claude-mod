@@ -274,7 +274,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.2.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.2.1' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -462,17 +462,26 @@ export function planTick(s: PlanState, tool: string, args: unknown): { state: Pl
 // computer's real state (host.ts readMachine) and holds a start it cannot carry. It fails open: no reading in time,
 // or one it cannot parse, allows the start.
 export const CAPACITY = {
-  // Footprints measured on a 16 GB MacBook: an idle session engine with its connectors is about 0.7 GB; a code session
-  // adds a build, a dev server and a browser, about 3 GB.
-  light_gb: 0.7, heavy_gb: 3.0,
-  // Memory kept for the person's own apps and the system: a quarter of RAM, never under 4 GB.
-  reserve_frac: 0.25, reserve_min_gb: 4.0,
+  // Sizes measured again on a 16 GB MacBook (1.2.1): a session engine with its connectors is about 0.6 GB, a code
+  // session with its build about 1.5 GB. The first numbers (0.7 and 3 GB, a quarter of RAM kept back) left room for
+  // one code session on a 16 GB Mac that in practice carries three or four.
+  light_gb: 0.6, heavy_gb: 1.5,
+  // Headroom for the person's own apps to grow (what they use now is already outside the free figure): an eighth of
+  // RAM, never under 2 GB.
+  reserve_frac: 0.125, reserve_min_gb: 2.0,
   // A running build is usually still growing: this much extra headroom for each one already running.
-  ramp_gb: 1.5,
-  full_free_pct: 20, wait_free_pct: 35,
-  full_swap_frac: 0.25, wait_swap_frac: 0.08,
-  full_load: 1.2, wait_load: 0.8,
-  cores_per_heavy: 3,
+  ramp_gb: 1.0,
+  // Backstops on the free percentage; the budget above does the real work.
+  full_free_pct: 10, wait_free_pct: 18,
+  // Swap sitting in use is NOT a reason to hold (1.2.1). Idle memory parked in swap costs nothing: a Mac that has been
+  // on for days holds several GB there while half its memory is free, and the old rule (swap over a quarter of RAM =
+  // full) held every start all day. What counts is macOS's own pressure level: 1 normal, 2 warning, 4 critical. The
+  // warning level alone does not hold a start (it is on much of a working day); critical does.
+  critical_pressure: 4,
+  // A load equal to the cores is a computer using what it has, not one in trouble, and starting a session costs
+  // almost no processor (its build comes minutes later).
+  full_load: 2.5, wait_load: 1.5,
+  cores_per_heavy: 2.5,
   stagger_ms: 90_000, // two session starts closer than this are refused: started together, their builds pile up
   override_ms: 600_000,
   // Windows: the Mac numbers above were never measured there (its page file and its "free" figure behave differently),
@@ -480,7 +489,7 @@ export const CAPACITY = {
   windows_full_free_pct: 10,
   timeout_ms: { mac: 2500, windows: 8000 } as Record<string, number>,
 }
-export type Reading = { os: 'mac' | 'windows'; ram_gb: number; cores: number; free_pct: number | null; swap_gb: number; load1: number; heavy_procs: number }
+export type Reading = { os: 'mac' | 'windows'; ram_gb: number; cores: number; free_pct: number | null; swap_gb: number; pressure: number; load1: number; heavy_procs: number }
 export type Verdict = { verdict: 'ok' | 'wait' | 'full'; reason: string; light_fit: number; heavy_fit: number }
 
 const HEAVY_PROC =
@@ -502,12 +511,13 @@ export function parseMacReading(out: string): Reading | undefined {
   const free = num(/free percentage:\s*(\d+)%/i)
   const swap = num(/^swap .*used = ([\d.]+)M/m)
   const load = num(/^load \{?\s*([\d.]+)/m)
+  const level = num(/^level (\d+)/m)
   let heavy = 0
   for (const row of ps.split('\n')) {
     if (!row.trim() || row.includes('Claude.app') || (row.includes('/claude-code/') && /\/claude(\s|$)/.test(row))) continue
     if (HEAVY_PROC.test(row) && isBinary(row.trim()) && !WORKER_PROC.test(row)) heavy++
   }
-  return { os: 'mac', ram_gb: Math.round(ram * 10) / 10, cores, free_pct: Number.isNaN(free) ? null : free, swap_gb: Number.isNaN(swap) ? 0 : Math.round((swap / 1024) * 100) / 100, load1: Number.isNaN(load) ? 0 : load, heavy_procs: heavy }
+  return { os: 'mac', ram_gb: Math.round(ram * 10) / 10, cores, free_pct: Number.isNaN(free) ? null : free, swap_gb: Number.isNaN(swap) ? 0 : Math.round((swap / 1024) * 100) / 100, pressure: Number.isNaN(level) ? 1 : level, load1: Number.isNaN(load) ? 0 : load, heavy_procs: heavy }
 }
 
 /** A Windows reading from host.ts WIN_READ, or undefined when it cannot be read. */
@@ -517,7 +527,7 @@ export function parseWindowsReading(out: string): Reading | undefined {
   const freeKb = num(/^free_kb (\d+)/m)
   const cores = num(/^cores (\d+)/m)
   if (!(ramKb > 0) || Number.isNaN(freeKb)) return undefined
-  return { os: 'windows', ram_gb: Math.round((ramKb / 2 ** 20) * 10) / 10, cores: cores > 0 ? cores : 1, free_pct: Math.round((freeKb / ramKb) * 100), swap_gb: 0, load1: 0, heavy_procs: 0 }
+  return { os: 'windows', ram_gb: Math.round((ramKb / 2 ** 20) * 10) / 10, cores: cores > 0 ? cores : 1, free_pct: Math.round((freeKb / ramKb) * 100), swap_gb: 0, pressure: 1, load1: 0, heavy_procs: 0 }
 }
 
 /** Pure: a reading in, a verdict out. */
@@ -535,8 +545,7 @@ export function decide(m: Reading, c = CAPACITY): Verdict {
     if (free < c.full_free_pct) full.push(`only ${free}% of memory is free`)
     else if (free < c.wait_free_pct) wait.push(`memory is getting tight (${free}% free)`)
   }
-  if (m.swap_gb > c.full_swap_frac * ram) full.push(`${m.swap_gb.toFixed(1)} GB of swap is in use`)
-  else if (m.swap_gb > c.wait_swap_frac * ram) wait.push(`${m.swap_gb.toFixed(1)} GB of swap is in use`)
+  if (m.pressure >= c.critical_pressure) full.push('macOS reports critical memory pressure')
   if (m.load1 > c.full_load * cores) full.push(`the processor is saturated (load ${m.load1} on ${cores} cores)`)
   else if (m.load1 > c.wait_load * cores) wait.push(`the processor is busy (load ${m.load1} on ${cores} cores)`)
   const avail = (ram * (free ?? 50)) / 100
@@ -551,7 +560,9 @@ export function decide(m: Reading, c = CAPACITY): Verdict {
     reasons = full.length > 0 ? full : ['no memory is left beyond what your own apps need']
   } else if (wait.length > 0 || heavy === 0) {
     verdict = 'wait'
-    reasons = wait.length > 0 ? wait : [`${m.heavy_procs} builds or browsers are already running, room for no more heavy work`]
+    reasons = wait.length > 0 ? wait
+      : spare < c.heavy_gb ? [`not enough free memory for a session that builds code (${Math.max(spare, 0).toFixed(1)} GB spare, it needs about ${c.heavy_gb})`]
+      : [`${m.heavy_procs} builds or browsers are already running (this computer takes ${heavyCap} at once)`]
   } else {
     verdict = 'ok'
     reasons = ['plenty of room']
