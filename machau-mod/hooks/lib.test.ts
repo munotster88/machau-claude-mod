@@ -364,3 +364,12 @@ test('Company Brain: work that reaches colleagues is a push, a pull request or a
     assert.ok(!sharesWork(c), c)
 })
 
+
+test('secret mask: a Supabase service-role key, by its shape and by its name', () => {
+  const made = ['sb', 'secret', 'Ab3dEf6hIj9kLmN2pQr5tUvWx8zA1cD'].join('_') // put together here: a made-up value, never a real key
+  const a = maskSecrets('SUPABASE_SERVICE_ROLE_KEY=' + made)
+  assert.equal(a.count, 1); assert.ok(!a.text.includes(made.slice(14)))
+  const b = maskSecrets('SERVICE_ROLE_KEY: "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe"')
+  assert.equal(b.count, 1); assert.ok(!b.text.includes('Vu7Ts6Rq5Po4'))
+  assert.deepEqual(maskSecrets('the service role key is kept on the server'), { text: 'the service role key is kept on the server', count: 0 })
+})

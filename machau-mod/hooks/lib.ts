@@ -12,13 +12,14 @@ const SECRET_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ['slack', /\bxox[abprs]-[A-Za-z0-9-]{10,}/g],
   ['live-key', /\b(?:sk|rk)_live_[A-Za-z0-9]{16,}\b/g],
   ['google', /\bAIza[0-9A-Za-z_-]{35}\b/g],
+  ['supabase', /\bsb_secret_[A-Za-z0-9_-]{20,}/g], // a service-role key printed from a server's settings got through (24 Nov 2026)
   ['jwt', /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g],
 ]
 // user:password@host in a connection string: mask the password only.
 const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s@/]{6,})(@)/gi
 // name = value, where the name says secret and the value looks random (letters and digits, 20+, no dots or brackets).
 const NAMED_SECRET =
-  /\b((?:[A-Za-z0-9_]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)[A-Za-z0-9_]*)["']?\s*[=:]\s*["']?)((?=[A-Za-z0-9+\/_-]*[0-9])(?=[A-Za-z0-9+\/_-]*[A-Za-z])[A-Za-z0-9+\/_-]{20,}={0,2})(?![A-Za-z0-9.(\[])/gi
+  /\b((?:[A-Za-z0-9_]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|service[_-]?role[_-]?key)[A-Za-z0-9_]*)["']?\s*[=:]\s*["']?)((?=[A-Za-z0-9+\/_-]*[0-9])(?=[A-Za-z0-9+\/_-]*[A-Za-z])[A-Za-z0-9+\/_-]{20,}={0,2})(?![A-Za-z0-9.(\[])/gi
 
 const stub = (value: string, kind: string) => `${value.slice(0, 4)}…[${kind} masked by machau-mod]`
 
@@ -274,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.2.1' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.2.2' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
