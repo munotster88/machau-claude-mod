@@ -140,7 +140,7 @@ test('deferral, name splitting, routing', () => {
   assert.ok(shouldDefer('Artifact') && shouldDefer('mcp__Claude_Browser__navigate'))
   assert.ok(shouldDefer('mcp__claude_ai_Adobe_for_creativity__adobe_mandatory_init'))
   assert.ok(!shouldDefer('Bash') && !shouldDefer('mcp__ccd_turn__update_plan'))
-  assert.deepEqual(splitMcp('mcp__machau-chat-sid__send_message'), ['machau-chat-sid', 'send_message'])
+  assert.deepEqual(splitMcp('mcp__machau-chat-other__send_message'), ['machau-chat-other', 'send_message'])
   assert.equal(splitMcp('Bash'), undefined)
   assert.equal(routeFor(ROUTE_LABELS[0]), 'opus')
   assert.equal(routeFor(ROUTE_LABELS[1]), 'sonnet')
@@ -372,4 +372,86 @@ test('secret mask: a Supabase service-role key, by its shape and by its name', (
   const b = maskSecrets('SERVICE_ROLE_KEY: "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2Ji1Hg0Fe"')
   assert.equal(b.count, 1); assert.ok(!b.text.includes('Vu7Ts6Rq5Po4'))
   assert.deepEqual(maskSecrets('the service role key is kept on the server'), { text: 'the service role key is kept on the server', count: 0 })
+})
+
+// ---------- 1.3.0: task inbox, role kit check, shared company rules ----------
+import {
+  INBOX_EVERY_MS, INBOX_SECTION, KIT_MARK, ROLE_KITS, ROLES, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor,
+  kitToldIn, readProfile, roleFrom, roleOf, techDeskOf,
+} from './lib.ts'
+import { RULES_LINES, rulesSection } from './rules.ts'
+
+test('a person picks a role with "my role is ..." and only a known role counts', () => {
+  assert.equal(roleFrom('my role is marketing'), 'marketing')
+  assert.equal(roleFrom('My role is Customer Care.'), 'customer care')
+  assert.equal(roleFrom('my role is astronaut'), undefined)
+  assert.equal(roleFrom('the marketing role is mine'), undefined)
+  assert.equal(roleOf('tech\nmarketing\n'), 'marketing')
+  assert.equal(roleOf(''), undefined)
+})
+
+test('every role has a kit, and every kit has Machau Chat for the inbox', () => {
+  for (const r of ROLES) {
+    assert.ok(ROLE_KITS[r].includes('machau-chat'), r)
+    assert.ok(ROLE_KITS[r].length >= 2, r)
+  }
+})
+
+test('the kit check reads one day of stamps: missing, due and already reported', () => {
+  const day = '2026-11-26'
+  const file = [`ok ${day} machau-chat`, `ok 2026-11-25 engage`, `told ${day} engage`, 'garbage line'].join('\n')
+  const st = kitStateFor(file, day)
+  assert.deepEqual([...st.ok], ['machau-chat'], 'yesterday does not count')
+  assert.deepEqual([...st.told], ['engage'])
+  const c = kitCheck('marketing', ['mcp__machau-chat__list_tasks', 'mcp__company-brain-cloud__brain_ask'], st)
+  assert.deepEqual(c.missing, ['engage'])
+  assert.deepEqual(c.due, ['company-brain-cloud'])
+  assert.deepEqual(c.told, ['engage'])
+})
+
+test('a kit whose connectors all answered today has no section; a failing one gets the desk and the one line', () => {
+  const day = '2026-11-26'
+  const all = ROLE_KITS.accounts.map(s => `ok ${day} ${s}`).join('\n')
+  const tools = ROLE_KITS.accounts.map(s => `mcp__${s}__ping`)
+  assert.equal(kitSection('accounts', kitCheck('accounts', tools, kitStateFor(all, day)), 'x'), undefined)
+  const none = kitSection('tech', kitCheck('tech', ['mcp__machau-chat__list_tasks'], kitStateFor('', day)), 'the founder')
+  assert.ok(none?.includes('Not connected in this session: company-brain-cloud, aws-mcp, plugin_cloudflare_cloudflare.'))
+  assert.ok(none?.includes(KIT_MARK + ' connector not working: <connector>.'))
+  assert.ok(none?.includes('connector not working: <connector> connector') === false)
+  assert.ok(none?.includes('Tech & Access has been told'))
+  assert.ok(none?.includes('the founder'))
+})
+
+test('the desk hears about a connector once: the kit-check message is recognised', () => {
+  assert.equal(kitToldIn(`{"text":"${KIT_MARK} connector not working: engage. The list call timed out"}`), 'engage')
+  assert.equal(kitToldIn('an ordinary message about engage'), undefined)
+  assert.equal(kitToldIn(`${KIT_MARK} connector not working: plugin_cloudflare_cloudflare. denied`), 'plugin_cloudflare_cloudflare')
+})
+
+test('the inbox is checked at most every 30 minutes, and only where its task tools are', () => {
+  const t0 = 1_000_000
+  assert.equal(inboxDue(t0, t0 + INBOX_EVERY_MS - 1), false)
+  assert.equal(inboxDue(t0, t0 + INBOX_EVERY_MS), true)
+  assert.equal(isMachauChatTool('mcp__machau-chat__list_tasks', 'list_tasks'), true)
+  assert.equal(isMachauChatTool('mcp__machau-chat-sid__list_tasks', 'list_tasks'), false)
+  assert.ok(INBOX_SECTION.includes('list_tasks') && INBOX_SECTION.includes('update_task') && INBOX_SECTION.includes('proof'))
+})
+
+test('the founder address and the desk come from the profile, never from the code', () => {
+  const p = readProfile('﻿{"founderEmail":"  f@example.com ","desks":{"techAccess":"chat-42"}}')
+  assert.equal(founderEmailOf(p), 'f@example.com')
+  assert.equal(techDeskOf(p), 'the Machau Chat chat chat-42')
+  assert.equal(founderEmailOf(readProfile('{"founderEmail":"not an address"}')), undefined)
+  assert.equal(techDeskOf(readProfile('nonsense')), "the founder's one-to-one chat in Machau Chat")
+  assert.equal(dayOf(new Date(2026, 10, 6)), '2026-11-06')
+})
+
+test('the company rules are short, and name the founder address only when one is set', () => {
+  assert.ok(RULES_LINES.length >= 7 && RULES_LINES.length <= 10)
+  const set = rulesSection('f@example.com')
+  assert.ok(set.includes('f@example.com'))
+  assert.ok(!set.includes('{FOUNDER}'))
+  assert.ok(rulesSection(undefined).includes('ask before you send one'))
+  assert.ok(set.includes('Read the last 3 days of a chat'))
+  assert.ok(set.length < 1200, 'short enough for every session')
 })

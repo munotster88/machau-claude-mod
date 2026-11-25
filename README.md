@@ -15,6 +15,11 @@ It does nothing in ordinary chat.
 | No blank Chrome | Refuses Playwright's logged-out Chrome window; points Claude to `chrome.sh` (a background tab in your own Chrome, Mac only) or the built-in browser | on (Mac), off (Windows) |
 | Live-claim guard | "It is live" after a deploy needs a ship check first (needs `~/os/bin/ship-check.py`) | off |
 | No Claude in Chrome | Refuses the Claude in Chrome tools | off |
+| Task inbox | Tasks HQ gives you in Machau Chat (your own `machau-chat` connector) are looked for when a session starts, when you say "take my tasks", and at the end of a turn every 30 minutes. Claude plans each, does what it can with your connectors, asks you only for your judgement, replies in the task's thread with proof, and closes it only with proof. An idle session is not woken: the check waits for the next turn | on |
+| Role kit check | Pick your role once by typing "my role is <role>" (tech, website, marketing, marketplaces, customer care, accounts, operations). Each day, the connectors of your role are checked once; a failing or missing one shows one line and Tech & Access gets one Machau Chat message about it (at most once a day per connector) | on |
+| Company rules | A short set of company rules (`machau-mod/hooks/rules.ts`) is added to every session: read the last 3 days of a chat, close a task only with proof, no secrets in chat, payment emails copy the founder | on |
+
+The founder's address for payment emails and the Tech & Access chat are read from your profile, not from this repo: `"founderEmail": "..."` and `"desks": { "techAccess": "<chat id>" }` (without `desks`, the messages go to the founder's own chat).
 
 ## Mac and Windows
 The same mod runs on both, and nothing else needs installing. It finds out which computer it is on and uses that computer's own shell for its few small files (`sh` on a Mac, PowerShell on Windows).

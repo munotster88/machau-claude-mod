@@ -160,7 +160,7 @@ test('a compaction keeps the conversation and drops old tool output', async () =
 test('with the Company Brain connected: Claude is told about it, and reminded once after work is pushed', async () => {
   const m = await load()
   const none = await m.call('prompt.compose', { tools: ['Bash', 'Read'] }, { sections: [] })
-  assert.deepEqual((none.sections as unknown[]).length, 0) // not connected: nothing is said
+  assert.equal((none.sections as { id: string }[]).filter(x => x.id === 'machau-mod:company-brain').length, 0) // not connected: nothing is said
   await m.call('tool.call', { tool: 'Bash', command: 'git push' }, bash)
   await m.call('turn.complete', { reason: 'answer', answer: 'Pushed.' }, {})
   assert.equal(m.sent.length, 0) // and nothing is asked
@@ -195,3 +195,48 @@ test('with the Company Brain connected: Claude is told about it, and reminded on
   assert.equal(m.sent.length, 2)
 })
 
+
+// ---------- 1.3.0: company rules, task inbox, role kit check ----------
+import { mkdirSync, writeFileSync } from 'node:fs'
+
+test('every session gets the company rules; a person can switch them off in their profile', async () => {
+  const on = await load()
+  const r = await on.call('prompt.compose', { tools: ['Bash'] }, { sections: [] })
+  assert.ok(r.sections.some((s: { id: string }) => s.id === 'machau-mod:company-rules'))
+  const off = await load()
+  mkdirSync(join(off.home, '.config', 'machau-mod'), { recursive: true })
+  writeFileSync(join(off.home, '.config', 'machau-mod', 'profile.json'), JSON.stringify({ switches: { companyRules: false } }))
+  const r2 = await off.call('prompt.compose', { tools: ['Bash'] }, { sections: [] })
+  assert.ok(!r2.sections.some((s: { id: string }) => s.id === 'machau-mod:company-rules'))
+})
+
+test('a session with Machau Chat gets the inbox; without it, none', async () => {
+  const m = await load()
+  const without = await m.call('prompt.compose', { tools: ['Bash'] }, { sections: [] })
+  assert.ok(!without.sections.some((s: { id: string }) => s.id === 'machau-mod:task-inbox'))
+  const withChat = await m.call('prompt.compose', { tools: ['mcp__machau-chat__list_tasks', 'mcp__machau-chat__update_task'] }, { sections: [] })
+  const inbox = withChat.sections.find((s: { id: string }) => s.id === 'machau-mod:task-inbox')
+  assert.ok(inbox && String(inbox.text).includes('take my tasks'))
+})
+
+test('a person picks a role once; the kit is checked, and an answering connector is stamped for the day', async () => {
+  const m = await load()
+  await m.call('prompt.submit', { origin: { kind: 'human' }, text: 'my role is marketing' }, {})
+  const picked = (await m.logged('roleKitCheck', lines => lines.some(l => l.detail.picked))).find(l => l.detail.picked)
+  assert.equal(picked?.detail.picked, 'marketing')
+  const tools = ['mcp__machau-chat__list_tasks', 'mcp__company-brain-cloud__brain_ask']
+  const r = await m.call('prompt.compose', { tools }, { sections: [] })
+  const kit = r.sections.find((s: { id: string }) => s.id === 'machau-mod:role-kit')
+  assert.ok(kit, 'the kit check is shown to Claude')
+  assert.ok(String(kit.text).includes('Not connected in this session: engage.'))
+  await m.call('tool.call', { tool: 'mcp__machau-chat__list_tasks' }, { result: { stdout: '[]' } })
+  const ok = (await m.logged('roleKitCheck', lines => lines.some(l => l.detail.answered))).find(l => l.detail.answered)
+  assert.equal(ok?.detail.answered, 'machau-chat')
+})
+
+test('a kit-check message to the desk is remembered, so the desk hears about a connector once', async () => {
+  const m = await load()
+  await m.call('tool.call', { tool: 'mcp__machau-chat__send_message', text: '[machau-mod kit check] connector not working: engage. timed out' }, {})
+  const told = (await m.logged('roleKitCheck', lines => lines.some(l => l.detail.told))).find(l => l.detail.told)
+  assert.equal(told?.detail.told, 'engage')
+})

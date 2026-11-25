@@ -4,7 +4,10 @@ import {
   capacityDeny, chromeDeny, decide, hasLine, hasLiveVerdict, holdReason, isClaudeInChrome, isDeployish, isPlaywright, lastNumberFor, liveClaim,
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
+  INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
+  readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
+import { rulesSection } from './rules.ts'
 import { appendHome, detect, readHome, readMachine, within, type Os, type Run } from './host.ts'
 
 // Machau's Claude mod: one small piece per recurring problem, each with a switch.
@@ -24,6 +27,9 @@ const DEFAULTS = {
   autoShrink: true, // between tasks, past 300k tokens, shrink without asking when it removes 40% and 100k tokens
   capacityGate: true, // a session or helper start is held when the computer has no room left; fails open
   brainCapture: true, // with the Company Brain connected: ask it before changing shared work, save one note per finished task
+  taskInbox: true, // Machau Chat tasks HQ gave this person: picked up at session start, and checked again after 30 idle minutes
+  roleKitCheck: true, // the connectors of the person's role are checked once a day; a failing one is reported to Tech & Access
+  companyRules: true, // the short company rules (hooks/rules.ts) are added to every session
 }
 type Switches = typeof DEFAULTS
 
@@ -38,18 +44,38 @@ const record = ($: Run, piece: string, detail: unknown) =>
   os($)
     .then(o => appendHome($, o, `${STATE}/events.jsonl`, JSON.stringify({ at: new Date().toISOString(), piece, detail })))
     .catch(() => {}) // a guard never fails a turn over its own log
+// The person's profile (switches, founder address for payment emails, desks), read once per session.
+let profileP: Promise<Profile> | undefined
+const profile = ($: Run): Promise<Profile> =>
+  (profileP ??= os($)
+    .then(async o => readProfile(await readHome($, o, '.config/machau-mod/profile.json')))
+    .catch(() => ({})))
 let switches: Promise<Switches> | undefined
 /** The switches for this person: the defaults (a few differ on Windows), changed by their profile file if they have one. */
 const sw = ($: Run): Promise<Switches> =>
-  (switches ??= os($)
-    .then(async o => {
-      const out = await readHome($, o, '.config/machau-mod/profile.json')
-      let own: Partial<Switches> | undefined
-      try { own = out.trim() ? (JSON.parse(out.replace(/^\uFEFF/, '')) as { switches?: Partial<Switches> }).switches : undefined } catch { own = undefined }
+  (switches ??= Promise.all([os($), profile($)])
+    .then(([o, p]) => {
+      const own = p.switches as Partial<Switches> | undefined
       void record($, 'loaded', { version: VERSION, os: o, ownSwitches: own ? Object.keys(own) : [] })
       return { ...DEFAULTS, ...osDefaults(o), ...own }
     })
     .catch(() => DEFAULTS))
+
+// Team pieces: the person's role (their own file, read once), this session's kit-check stamps (one state file, shared by
+// the session and every later one on this computer), and the inbox.
+const ROLE_FILE = '.config/machau-mod/role'
+const KIT_FILE = `${STATE}/kit`
+let roleP: Promise<Role | undefined> | undefined
+const roleNow = ($: Run): Promise<Role | undefined> =>
+  (roleP ??= os($).then(o => readHome($, o, ROLE_FILE)).then(f => roleOf(f)).catch(() => undefined))
+let kitP: Promise<KitState> | undefined
+const kitNow = ($: Run): Promise<KitState> =>
+  (kitP ??= os($)
+    .then(o => readHome($, o, KIT_FILE))
+    .then(f => kitStateFor(f, dayOf(new Date())))
+    .catch(() => ({ ok: new Set<string>(), told: new Set<string>() })))
+const kitStamp = ($: Run, kind: 'ok' | 'told', server: string) =>
+  os($).then(o => appendHome($, o, KIT_FILE, `${kind} ${dayOf(new Date())} ${server}`)).catch(() => {})
 
 // Capacity check: when this session last started another, and until when the person's own word sets the check aside.
 const cap = { lastStart: 0, overrideUntil: 0 }
@@ -107,6 +133,12 @@ export const register: Register = on => {
   const held: Record<string, string> = {}
   const handedOver = new Set<string>()
   const savedOnce = new Set<string>()
+  // Team pieces: whether this session has shown the kit check and the role question, when the inbox was last checked,
+  // and whether this session has Machau Chat's task tools at all.
+  let kitShown = false
+  let roleAsked = false
+  let lastInbox = 0
+  let inboxHere = false
 
   on('tool.check', async ($, e, next) => {
     if ((await sw($)).noClaudeInChrome && isClaudeInChrome(e.tool)) return { decision: 'deny', reason: chromeDeny((await os($)) === 'mac') }
@@ -127,6 +159,14 @@ export const register: Register = on => {
     if ((await sw($)).capacityGate && asksOverride(said)) {
       cap.overrideUntil = Date.now() + CAPACITY.override_ms
       void record($, 'capacityGate', { override: 'the person said so', minutes: CAPACITY.override_ms / 60_000 })
+    }
+    // "my role is marketing": kept in the person's own role file, one line, and used from now on.
+    const picked = roleFrom(said)
+    if (picked && (await sw($)).roleKitCheck) {
+      roleP = Promise.resolve(picked)
+      kitShown = false
+      void os($).then(o => appendHome($, o, ROLE_FILE, picked)).catch(() => {})
+      void record($, 'roleKitCheck', { picked })
     }
     return next(e)
   })
@@ -195,6 +235,30 @@ export const register: Register = on => {
     let r = await next(call)
     if (r.deny !== undefined) return r
     if (tool === WRAP_TOOL && e.agentId === undefined) wrappedThisTurn = true
+
+    // Role kit check: a connector of the person's kit that answers is done for today; a kit-check message to the desk is
+    // remembered, so the desk hears about one connector once a day.
+    if (e.agentId === undefined && (await sw($)).roleKitCheck && !r.isError) {
+      const server = splitMcp(tool)?.[0]
+      const role = await roleNow($)
+      if (server && role && ROLE_KITS[role].includes(server)) {
+        const st = await kitNow($)
+        if (!st.ok.has(server)) {
+          st.ok.add(server)
+          void kitStamp($, 'ok', server)
+          void record($, 'roleKitCheck', { answered: server })
+        }
+      }
+      const told = isMachauChatTool(tool, 'send_message') ? kitToldIn(JSON.stringify(e)) : undefined
+      if (told) {
+        const st = await kitNow($)
+        if (!st.told.has(told)) {
+          st.told.add(told)
+          void kitStamp($, 'told', told)
+          void record($, 'roleKitCheck', { told: told })
+        }
+      }
+    }
     if (isBrainCapture(tool)) {
       // A saved note clears the count. A refusal that names the person's identity (an owner using the member tool is sent to
       // the other one, so only a missing department counts) stops the reminders for this session.
@@ -317,6 +381,11 @@ export const register: Register = on => {
       sharedSinceNote = 0 // one reminder per piece of shared work, whatever Claude answers
       return nudge('brainCapture', { reminded: true, shared }, brainNudge(brain))
     }
+    // Task inbox: the mod cannot wake an idle session, so the check rides on the end of a turn, at most every 30 minutes.
+    if (set.taskInbox && inboxHere && inboxDue(lastInbox, Date.now())) {
+      lastInbox = Date.now()
+      return nudge('taskInbox', { checked: true }, INBOX_NUDGE)
+    }
     if (set.sessionSize) {
       const id = await $.session.id().catch(() => '')
       if (!markLoaded) {
@@ -347,6 +416,28 @@ export const register: Register = on => {
     if (set.brainCapture) {
       brain = brainTools(e.tools)
       if (brain) sections = [...sections, { id: 'machau-mod:company-brain', text: brainSection(brain), scope: 'session' as const }]
+    }
+    // Company rules, the task inbox, and the role kit (the kit once per session, and once a day per connector).
+    if (set.companyRules) sections = [...sections, { id: 'machau-mod:company-rules', text: rulesSection(founderEmailOf(await profile($))), scope: 'session' as const }]
+    inboxHere = set.taskInbox && e.tools.some(t => isMachauChatTool(t, 'list_tasks'))
+    if (inboxHere) {
+      if (lastInbox === 0) lastInbox = Date.now()
+      sections = [...sections, { id: 'machau-mod:task-inbox', text: INBOX_SECTION, scope: 'session' as const }]
+    }
+    if (set.roleKitCheck && !kitShown) {
+      const role: Role | undefined = await roleNow($)
+      if (!role) {
+        if (!roleAsked) {
+          roleAsked = true
+          sections = [...sections, { id: 'machau-mod:role-ask', text: ROLE_ASK, scope: 'session' as const }]
+        }
+      } else {
+        const text = kitSection(role, kitCheck(role, e.tools, await kitNow($)), techDeskOf(await profile($)))
+        if (text) {
+          kitShown = true
+          sections = [...sections, { id: 'machau-mod:role-kit', text, scope: 'session' as const }]
+        }
+      }
     }
     if (set.contextTrim) {
       const offered = ON_DEMAND_INDEX.filter(([key]) => e.tools.some(t => (key.endsWith('__') ? t.startsWith(key) : t === key)))

@@ -275,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.2.2' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.3.0' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -649,3 +649,124 @@ export const sharesWork = (command: string) => {
   return /\bgit\s+(?:-C\s+\S+\s+)?push\b/.test(bare) || /\bgh\s+pr\s+(?:create|merge)\b/.test(bare) || /(?:^|[;&|]\s*|\bnpm run |\bpnpm (?:run )?|\byarn |\bwrangler |\.\/)deploy\b/.test(bare)
 }
 
+
+// ---------- team pieces (1.3.0): task inbox, role kit check, shared company rules ----------
+// Work that HQ hands out as Machau Chat tasks, a daily check that each connector a role needs answers, and one set of
+// company rules. A plugin cannot wake an idle session by itself, so the inbox is looked at when a session starts, when
+// the person says "take my tasks", and at the end of a turn once INBOX_EVERY_MS has passed (see register.ts).
+export const INBOX_EVERY_MS = 30 * 60_000
+export const TECH_DESK_LABEL = 'Tech & Access'
+export const ROLES = ['tech', 'website', 'marketing', 'marketplaces', 'customer care', 'accounts', 'operations'] as const
+export type Role = (typeof ROLES)[number]
+// The connectors a role needs, by the server name Claude sees (mcp__<server>__<tool>). Every role needs Machau Chat and the
+// Company Brain. Edit a kit here and the next mod update reaches everyone.
+const COMMON_CONNECTORS = ['machau-chat', 'company-brain-cloud'] as const
+export const ROLE_KITS: Readonly<Record<Role, readonly string[]>> = {
+  tech: [...COMMON_CONNECTORS, 'aws-mcp', 'plugin_cloudflare_cloudflare'],
+  website: [...COMMON_CONNECTORS, 'bamboostan-app'],
+  marketing: [...COMMON_CONNECTORS, 'engage'],
+  marketplaces: [...COMMON_CONNECTORS, 'bamboostan-app'],
+  'customer care': [...COMMON_CONNECTORS, 'engage'],
+  accounts: [...COMMON_CONNECTORS, 'composio'],
+  operations: [...COMMON_CONNECTORS, 'bamboostan-app'],
+}
+
+/** "my role is marketing" -> 'marketing'; anything else is not a role. */
+export function roleFrom(text: string): Role | undefined {
+  const m = /^\s*my role is\s+(.+?)[.\s]*$/i.exec(text)
+  const r = m?.[1].trim().toLowerCase() ?? ''
+  return (ROLES as readonly string[]).includes(r) ? (r as Role) : undefined
+}
+/** The role the person picked last: the last line of their role file. */
+export function roleOf(file: string): Role | undefined {
+  const last = file.split(/\r?\n/).map(l => l.trim()).filter(Boolean).pop() ?? ''
+  return (ROLES as readonly string[]).includes(last) ? (last as Role) : undefined
+}
+
+/** The day as YYYY-MM-DD in this computer's own time zone. */
+export const dayOf = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Stamps in the state file, one per line: "ok <day> <connector>" (it answered that day) and "told <day> <connector>"
+// (the desk has been messaged about it that day).
+export type KitState = { ok: Set<string>; told: Set<string> }
+export function kitStateFor(file: string, day: string): KitState {
+  const st: KitState = { ok: new Set(), told: new Set() }
+  for (const line of file.split(/\r?\n/)) {
+    const [kind, d, server] = line.trim().split(' ')
+    if (d !== day || !server) continue
+    if (kind === 'ok') st.ok.add(server)
+    else if (kind === 'told') st.told.add(server)
+  }
+  return st
+}
+
+export const KIT_MARK = '[machau-mod kit check]'
+const KIT_TOLD = /\[machau-mod kit check\] connector not working: ([A-Za-z0-9_-]+)/
+/** The connector a message to the desk reports, when it is the kit check's own message. */
+export const kitToldIn = (text: string): string | undefined => KIT_TOLD.exec(text)?.[1]
+
+/** What the kit check has to do now: connectors missing from this session, ones not yet answering today, and the ones already reported today. */
+export function kitCheck(role: Role, tools: readonly string[], st: KitState) {
+  const have = new Set(tools.map(t => splitMcp(t)?.[0]).filter((s): s is string => s !== undefined))
+  const kit = ROLE_KITS[role]
+  return {
+    missing: kit.filter(c => !have.has(c)),
+    due: kit.filter(c => have.has(c) && !st.ok.has(c)),
+    told: kit.filter(c => st.told.has(c)),
+  }
+}
+
+/** The instructions for this session's check, or undefined when every connector of the kit has answered today. */
+export function kitSection(role: Role, c: { missing: string[]; due: string[]; told: string[] }, desk: string): string | undefined {
+  if (c.missing.length === 0 && c.due.length === 0) return undefined
+  const lines = [`Role kit check (machau-mod), role "${role}".`]
+  if (c.due.length > 0)
+    lines.push(`Check these today, one cheap read call each (a list or a search that changes nothing): ${c.due.join(', ')}. A connector that answers is done for today.`)
+  if (c.missing.length > 0) lines.push(`Not connected in this session: ${c.missing.join(', ')}.`)
+  lines.push(
+    `For each connector that fails or is missing, show one line: "<connector> connector not working: ${TECH_DESK_LABEL} has been told". ` +
+      `Then send ONE Machau Chat message to ${desk} whose text starts with exactly "${KIT_MARK} connector not working: <connector>. " and says what failed, ` +
+      `unless that connector was already reported today (${c.told.join(', ') || 'none'}). Never message for a connector that is only slow.`,
+  )
+  return lines.join('\n')
+}
+
+export const inboxDue = (lastAt: number, now: number) => now - lastAt >= INBOX_EVERY_MS
+
+export const INBOX_SECTION = [
+  'Task inbox (machau-mod): HQ gives out work as Machau Chat tasks assigned to this person.',
+  'At the start of the session, and whenever the person says "take my tasks", call list_tasks (mine, open).',
+  'With none open, say "No new tasks from HQ." and stop.',
+  "For each open task, in order: read the task and its thread (get_messages); write a plan of three lines at most; do what you can with this person's connectors; ask the person only for their judgement; reply in the task's thread (send_message) with what was done and the proof; mark it done (update_task) only with proof.",
+  "Never act outside the company, and never do anything irreversible (money, a message to someone outside, anything a customer sees, a deletion) without this person's yes.",
+  'If tasks are open and not started, say one line: "N new tasks from HQ: say \'take my tasks\'".',
+].join('\n')
+export const INBOX_NUDGE =
+  'Task inbox check (machau-mod): take my tasks. Call list_tasks (mine, open) now and follow the task inbox rules. ' +
+  'If none are open, reply only "No new tasks from HQ."'
+export const ROLE_ASK =
+  `Role (machau-mod): this person has not picked a role yet. Ask once, in one line, which role they have: ${ROLES.join(', ')}. ` +
+  'When they answer "my role is <role>", reply that it is saved.'
+
+export const isMachauChatTool = (tool: string, name?: string) => {
+  const p = splitMcp(tool)
+  return p !== undefined && p[0] === 'machau-chat' && (name === undefined || p[1] === name)
+}
+
+/** The profile file, read tolerantly: a bad file means no settings, never an error. */
+export type Profile = { switches?: Record<string, boolean>; founderEmail?: string; desks?: { techAccess?: string } }
+export function readProfile(raw: string): Profile {
+  try {
+    const p = JSON.parse(raw.replace(/^﻿/, '')) as Profile
+    return p && typeof p === 'object' ? p : {}
+  } catch {
+    return {}
+  }
+}
+/** The founder's address for payment emails, when the profile holds a plausible one. */
+export const founderEmailOf = (p: Profile) =>
+  typeof p.founderEmail === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.founderEmail.trim()) ? p.founderEmail.trim() : undefined
+/** Where the Tech & Access messages go: the profile's desk, or the founder's own chat in Machau Chat. */
+export const techDeskOf = (p: Profile) =>
+  typeof p.desks?.techAccess === 'string' && p.desks.techAccess.trim() ? `the Machau Chat chat ${p.desks.techAccess.trim()}` : "the founder's one-to-one chat in Machau Chat"
