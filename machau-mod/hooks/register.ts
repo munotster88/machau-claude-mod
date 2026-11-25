@@ -5,7 +5,7 @@ import {
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
-  readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
+  KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
 import { rulesSection } from './rules.ts'
 import { appendHome, detect, readHome, readMachine, within, type Os, type Run } from './host.ts'
@@ -238,8 +238,12 @@ export const register: Register = on => {
 
     // Role kit check: a connector of the person's kit that answers is done for today; a kit-check message to the desk is
     // remembered, so the desk hears about one connector once a day.
-    if (e.agentId === undefined && (await sw($)).roleKitCheck && !r.isError) {
-      const server = splitMcp(tool)?.[0]
+    // Only calls to a kit's connectors, or the kit-check message, look at the role file (on Windows every look is a
+    // slow PowerShell start, and ordinary calls must not wait for one).
+    const kitServer = splitMcp(tool)?.[0]
+    const told0 = isMachauChatTool(tool, 'send_message') ? kitToldIn(JSON.stringify(e)) : undefined
+    if (e.agentId === undefined && (kitServer !== undefined && KIT_SERVERS.has(kitServer) || told0) && (await sw($)).roleKitCheck && !r.isError) {
+      const server = kitServer
       const role = await roleNow($)
       if (server && role && ROLE_KITS[role].includes(server)) {
         const st = await kitNow($)
@@ -249,7 +253,7 @@ export const register: Register = on => {
           void record($, 'roleKitCheck', { answered: server })
         }
       }
-      const told = isMachauChatTool(tool, 'send_message') ? kitToldIn(JSON.stringify(e)) : undefined
+      const told = told0
       if (told) {
         const st = await kitNow($)
         if (!st.told.has(told)) {

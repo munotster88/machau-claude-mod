@@ -770,3 +770,6 @@ export const founderEmailOf = (p: Profile) =>
 /** Where the Tech & Access messages go: the profile's desk, or the founder's own chat in Machau Chat. */
 export const techDeskOf = (p: Profile) =>
   typeof p.desks?.techAccess === 'string' && p.desks.techAccess.trim() ? `the Machau Chat chat ${p.desks.techAccess.trim()}` : "the founder's one-to-one chat in Machau Chat"
+
+/** The connectors any role's kit names: only calls to these (and the kit-check message) cost a look at the role file. */
+export const KIT_SERVERS: ReadonlySet<string> = new Set(Object.values(ROLE_KITS).flat())
