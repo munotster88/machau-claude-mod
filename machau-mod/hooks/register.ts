@@ -5,10 +5,11 @@ import {
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
+  COLLECTOR_URL, heartbeatBody, heartbeatDue, istDayOf,
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
 import { rulesSection } from './rules.ts'
-import { appendHome, detect, readHome, readMachine, within, type Os, type Run } from './host.ts'
+import { appendHome, detect, powershell, readHome, readMachine, within, type Os, type Run } from './host.ts'
 
 // Machau's Claude mod: one small piece per recurring problem, each with a switch.
 // Add a piece: write its logic in lib.ts with a test, hook it here, add a switch and a README line.
@@ -30,6 +31,7 @@ const DEFAULTS = {
   taskInbox: true, // Machau Chat tasks HQ gave this person: picked up at session start, and checked again after 30 idle minutes
   roleKitCheck: true, // the connectors of the person's role are checked once a day; a failing one is reported to Tech & Access
   companyRules: true, // the short company rules (hooks/rules.ts) are added to every session
+  heartbeat: true, // once a day: who has the plugin, its version, Mac or Windows, last use. No content (see COLLECTOR_URL)
 }
 type Switches = typeof DEFAULTS
 
@@ -107,6 +109,27 @@ const LIVE_NUDGE = (sentence: string) =>
   'session no `~/os/bin/ship-check.py` run has returned VERDICT: LIVE. Run the ship check now, then say plainly ' +
   'whether it is live. If that sentence was about something that was already live before this session (from a record, ' +
   'not from this deploy), say so in one line and stop.'
+
+// Heartbeat (1.4.0): at most once a day per computer, and only when the person has set a member id in their profile and a
+// collector token is on this computer. Sends the fields in heartbeatBody and nothing else. The day is kept in a local file.
+const HEART = '.local/state/machau-mod/heartbeat.txt'
+async function heartbeat($: Run, set: Switches) {
+  const o = await os($)
+  const p = await profile($)
+  const today = istDayOf(new Date())
+  const last = (await readHome($, o, HEART)).trim().split('\n').pop()?.trim() || undefined
+  if (!heartbeatDue(last, today, p.member)) return
+  const token = o === 'mac'
+    ? (await within($.process.run(['/bin/sh', '-c', 'security find-generic-password -s team-collector-token -w 2>/dev/null']).then(String), 8000, '')).trim()
+    : (process.env.MACHAU_COLLECTOR_TOKEN ?? '').trim()
+  if (!token) return
+  const body = heartbeatBody({ member: p.member!, version: VERSION, os: o, pieces: Object.keys(set).filter(k => (set as Record<string, unknown>)[k] === true), lastActive: new Date().toISOString() })
+  const sent = o === 'mac'
+    ? await within($.process.run(['/usr/bin/curl', '-s', '-m', '10', '-X', 'POST', COLLECTOR_URL, '-H', `authorization: Bearer ${token}`, '-H', 'content-type: application/json', '--data', body]).then(String), 12000, '')
+    : await within($.process.run(powershell(`$env:TOKEN='${token}'; Invoke-RestMethod -Method Post -Uri '${COLLECTOR_URL}' -Headers @{Authorization="Bearer $env:TOKEN"} -ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(String), 12000, '')
+  if (/"ok":\s*true/.test(String(sent))) await appendHome($, o, HEART, today)
+  void record($, 'heartbeat', { sent: /"ok":\s*true/.test(String(sent)), os: o })
+}
 
 export const register: Register = on => {
   // Live guard: the order of a deploy-like command, a LIVE verdict, and the deploy we already nudged about.
@@ -340,6 +363,7 @@ export const register: Register = on => {
     const r = await next(e)
     if (e.agentId !== undefined || e.reason !== 'answer') return r
     const set = await sw($)
+    if (set.heartbeat) void heartbeat($, set).catch(() => {})
     // One nudge per turn end at most. Not awaited: a plugin's prompt runs once the session is idle, after this hook returns.
     const nudge = (piece: string, detail: unknown, text: string) => {
       void record($, piece, detail)
