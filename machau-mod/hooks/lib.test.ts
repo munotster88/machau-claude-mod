@@ -474,3 +474,25 @@ test('the India calendar day is used for the heartbeat', () => {
   assert.equal(hbDay(new Date('2026-11-26T19:30:00Z')), '2026-11-27')
   assert.equal(hbDay(new Date('2026-11-26T10:00:00Z')), '2026-11-26')
 })
+
+// ---------- work record (1.4.1) ----------
+import { looksLikeCorrection as lc, scrubText as scrub, recordBody as rb } from './lib.ts'
+test('a correction is recognised from the start of a short prompt only', () => {
+  assert.equal(lc('no, that is the wrong file'), true)
+  assert.equal(lc('undo that'), true)
+  assert.equal(lc('please add a chart to the report'), false)
+  assert.equal(lc('no'.repeat(120)), false)
+})
+test('scrubbing removes contact details and key-like strings', () => {
+  const out = scrub('mail test@example.com phone 9876543210 key sk_test_abcdefghijklmnop order 123456789012')
+  assert.equal(out.includes('@'), false)
+  assert.equal(out.includes('9876543210'), false)
+  assert.equal(out.includes('sk_test'), false)
+  assert.equal(out.includes('123456789012'), false)
+})
+test('a record carries counts and the scrubbed note only', () => {
+  const body = JSON.parse(rb({ id: 'abc12345', member: 'member-a', area: 'pilot', stats: { turns: 5, toolCalls: 9, corrections: 1, startedAt: 0, status: 'finished' }, now: 600_000, summary: 'Done. Contact test@example.com' }))
+  assert.deepEqual(Object.keys(body).sort(), ['area','corrections','id','kind','member','minutes','status','summary','tool_calls','turns'])
+  assert.equal(body.minutes, 10)
+  assert.equal(body.summary.includes('@'), false)
+})

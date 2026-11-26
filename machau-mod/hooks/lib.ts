@@ -275,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.4.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.4.1' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -755,7 +755,7 @@ export const isMachauChatTool = (tool: string, name?: string) => {
 }
 
 /** The profile file, read tolerantly: a bad file means no settings, never an error. */
-export type Profile = { switches?: Record<string, boolean>; founderEmail?: string; desks?: { techAccess?: string }; member?: string }
+export type Profile = { switches?: Record<string, boolean>; founderEmail?: string; desks?: { techAccess?: string }; member?: string; area?: string }
 export function readProfile(raw: string): Profile {
   try {
     const p = JSON.parse(raw.replace(/^﻿/, '')) as Profile
@@ -787,3 +787,25 @@ export const heartbeatDue = (lastDay: string | undefined, today: string, member:
 /** The only fields sent. No conversation, no file names, no folders, no prompts. */
 export const heartbeatBody = (a: { member: string; version: string; os: string; pieces: readonly string[]; lastActive: string }) =>
   JSON.stringify({ member: a.member, plugin_version: a.version, os: a.os, pieces: a.pieces.slice(0, 40), last_active: a.lastActive })
+
+
+// ---------- work record (1.4.1): one short record per session, counts plus a scrubbed note. No transcript. ----------
+export const RECORD_URL = 'https://team-collector.siddharth-90e.workers.dev/record'
+/** A short prompt that looks like a correction ("no", "wrong", "undo"...). Approximate by design. */
+export const looksLikeCorrection = (text: string) => text.length <= 200 && /^\s*(no\b|nope|wrong|not that|that'?s not|undo|revert|stop\b)/i.test(text)
+/** Removes contact details and key-like strings before anything leaves the laptop. */
+export const scrubText = (t: string) =>
+  String(t || '')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]')
+    .replace(/(\+?91[ -]?)?[6-9]\d{9}\b/g, '[phone]')
+    .replace(/\b\d{9,}\b/g, '[number]')
+    .replace(/\b(sk|pk|mf|eyJ|AKIA)[A-Za-z0-9_.-]{12,}/g, '[key]')
+    .slice(0, 3000)
+export type RecordStats = { turns: number; toolCalls: number; corrections: number; startedAt: number; status: 'finished' | 'open' }
+/** The only fields sent for a record. The summary is the person's own note, scrubbed. */
+export const recordBody = (a: { id: string; member: string; area: string; stats: RecordStats; now: number; summary: string }) =>
+  JSON.stringify({
+    id: a.id, member: a.member, area: a.area.slice(0, 60), status: a.stats.status,
+    turns: a.stats.turns, tool_calls: a.stats.toolCalls, minutes: Math.round((a.now - a.stats.startedAt) / 60_000),
+    corrections: a.stats.corrections, kind: 'other', summary: scrubText(a.summary),
+  })

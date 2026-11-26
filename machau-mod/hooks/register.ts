@@ -5,7 +5,7 @@ import {
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
-  COLLECTOR_URL, heartbeatBody, heartbeatDue, istDayOf,
+  COLLECTOR_URL, RECORD_URL, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, type RecordStats,
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
 import { rulesSection } from './rules.ts'
@@ -31,6 +31,7 @@ const DEFAULTS = {
   taskInbox: true, // Machau Chat tasks HQ gave this person: picked up at session start, and checked again after 30 idle minutes
   roleKitCheck: true, // the connectors of the person's role are checked once a day; a failing one is reported to Tech & Access
   companyRules: true, // the short company rules (hooks/rules.ts) are added to every session
+  workRecord: true, // one short record per session (counts and a scrubbed note) to the team collector; no transcript
   heartbeat: true, // once a day: who has the plugin, its version, Mac or Windows, last use. No content (see COLLECTOR_URL)
 }
 type Switches = typeof DEFAULTS
@@ -110,6 +111,28 @@ const LIVE_NUDGE = (sentence: string) =>
   'whether it is live. If that sentence was about something that was already live before this session (from a record, ' +
   'not from this deploy), say so in one line and stop.'
 
+// Work record (1.4.1): per session, counts plus the scrubbed note saved to the Company Brain. Sent every 5 turns and when the
+// note is saved. The token and member id are the heartbeat's: from the keychain (Mac) or MACHAU_COLLECTOR_TOKEN (Windows).
+const recStats = new Map<string, RecordStats>()
+let lastSession = ''
+async function sendRecord($: Run, sid: string, st: RecordStats, summary = '') {
+  const o = await os($)
+  const p = await profile($)
+  if (!p.member || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(p.member)) return
+  const token = o === 'mac'
+    ? (await within($.process.run(['/bin/sh', '-c', 'security find-generic-password -s team-collector-token -w 2>/dev/null']).then(String), 8000, '')).trim()
+    : (process.env.MACHAU_COLLECTOR_TOKEN ?? '').trim()
+  if (!token) return
+  const body = recordBody({ id: sid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'session', member: p.member, area: p.area ?? '', stats: st, now: Date.now(), summary })
+  if (o === 'mac') await within($.process.run(['/usr/bin/curl', '-s', '-m', '10', '-X', 'POST', RECORD_URL, '-H', `authorization: Bearer ${token}`, '-H', 'content-type: application/json', '--data', body]).then(String), 12000, '')
+  else await within($.process.run(powershell(`$env:TOKEN='${token}'; Invoke-RestMethod -Method Post -Uri '${RECORD_URL}' -Headers @{Authorization="Bearer $env:TOKEN"} -ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | Out-Null`)).then(String), 12000, '')
+}
+function statsFor(sid: string): RecordStats {
+  let s = recStats.get(sid)
+  if (!s) { s = { turns: 0, toolCalls: 0, corrections: 0, startedAt: Date.now(), status: 'open' }; recStats.set(sid, s) }
+  return s
+}
+
 // Heartbeat (1.4.0): at most once a day per computer, and only when the person has set a member id in their profile and a
 // collector token is on this computer. Sends the fields in heartbeatBody and nothing else. The day is kept in a local file.
 const HEART = '.local/state/machau-mod/heartbeat.txt'
@@ -171,6 +194,7 @@ export const register: Register = on => {
 
   // What the person typed, on its way in: "shrink this session" and "start it anyway" are heard here.
   on('prompt.submit', async ($, e, next) => {
+    if (((e as { origin?: { kind?: string } }).origin?.kind ?? 'human') !== 'plugin' && typeof (e as { text?: unknown }).text === 'string' && looksLikeCorrection(String((e as { text?: unknown }).text)) && lastSession) statsFor(lastSession).corrections++
     // A prompt typed by the person has no origin, or human/user/sdk where the app or `claude -p` passes it in.
     // A plugin's own nudge and another session's message are left alone.
     const from = (e as { origin?: { kind?: string } }).origin?.kind
@@ -227,6 +251,7 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
+    if ((await sw($)).workRecord) { lastSession = await $.session.id().catch(() => '') || lastSession; if (lastSession) statsFor(lastSession).toolCalls++ }
     if ((await sw($)).noClaudeInChrome && isClaudeInChrome(tool)) {
       void record($, 'noClaudeInChrome', tool)
       return { deny: chromeDeny((await os($)) === 'mac') }
@@ -289,7 +314,7 @@ export const register: Register = on => {
     if (isBrainCapture(tool)) {
       // A saved note clears the count. A refusal that names the person's identity (an owner using the member tool is sent to
       // the other one, so only a missing department counts) stops the reminders for this session.
-      if (!r.isError) sharedSinceNote = 0
+      if (!r.isError) { sharedSinceNote = 0; if (lastSession) { const st = statsFor(lastSession); st.status = 'finished'; void sendRecord($, lastSession, st, String((e as { input?: { content?: unknown } }).input?.content ?? '')).catch(() => {}) } }
       else if (/department|member_access_off|not permitted/i.test(String(r.text ?? '')) && !/requires_member_identity/.test(String(r.text ?? ''))) {
         brainRefused = true
         void record($, 'brainCapture', { refused: String(r.text ?? '').slice(0, 120) })
@@ -364,6 +389,7 @@ export const register: Register = on => {
     if (e.agentId !== undefined || e.reason !== 'answer') return r
     const set = await sw($)
     if (set.heartbeat) void heartbeat($, set).catch(() => {})
+    if (set.workRecord && lastSession) { const st = statsFor(lastSession); st.turns++; if (st.turns % 5 === 0) void sendRecord($, lastSession, st).catch(() => {}) }
     // One nudge per turn end at most. Not awaited: a plugin's prompt runs once the session is idle, after this hook returns.
     const nudge = (piece: string, detail: unknown, text: string) => {
       void record($, piece, detail)
