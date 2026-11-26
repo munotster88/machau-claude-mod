@@ -459,14 +459,14 @@ test('the company rules are short, and name the founder address only when one is
 // ---------- heartbeat (1.4.0) ----------
 import { heartbeatBody as hbBody, heartbeatDue as hbDue, istDayOf as hbDay } from './lib.ts'
 test('heartbeat is sent at most once a day, and only with a member id', () => {
-  assert.equal(hbDue(undefined, '2026-11-27', 'sid'), true)
-  assert.equal(hbDue('2026-11-27', '2026-11-27', 'sid'), false)
-  assert.equal(hbDue('2026-11-26', '2026-11-27', 'sid'), true)
+  assert.equal(hbDue(undefined, '2026-11-27', 'member-a'), true)
+  assert.equal(hbDue('2026-11-27', '2026-11-27', 'member-a'), false)
+  assert.equal(hbDue('2026-11-26', '2026-11-27', 'member-a'), true)
   assert.equal(hbDue(undefined, '2026-11-27', undefined), false)
   assert.equal(hbDue(undefined, '2026-11-27', 'Not A Valid Id!'), false)
 })
 test('heartbeat body carries only the agreed fields', () => {
-  const body = JSON.parse(hbBody({ member: 'sid', version: '1.4.0', os: 'mac', pieces: ['secretMask'], lastActive: '2026-11-26T19:00:00+05:30' }))
+  const body = JSON.parse(hbBody({ member: 'member-a', version: '1.4.0', os: 'mac', pieces: ['secretMask'], lastActive: '2026-11-26T19:00:00+05:30' }))
   assert.deepEqual(Object.keys(body).sort(), ['last_active', 'member', 'os', 'pieces', 'plugin_version'])
   assert.deepEqual(body.pieces, ['secretMask'])
 })
