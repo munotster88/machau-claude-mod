@@ -496,3 +496,36 @@ test('a record carries counts and the scrubbed note only', () => {
   assert.equal(body.minutes, 10)
   assert.equal(body.summary.includes('@'), false)
 })
+
+// ---------- 1.4.2: the same scrub examples as the collector, and enrolment ----------
+import { areaFromFolder as areaOf, enrolCodeIn as codeIn, readCollector as readCol } from './lib.ts'
+test('scrub removes pasted secrets, phone numbers and customer identifiers (same examples as the collector)', () => {
+  const must: Array<[string, string[]]> = [
+    ['call 9876543210 now', ['9876543210']], ['call +91 98765 43210 now', ['98765', '43210']], ['call 987-654-3210', ['987-654-3210']],
+    ['UK +44 7911 123456', ['7911 123456']],
+    ['key sk-abcdefghijklmnop1234567890', ['sk-abcdefghijklmnop1234567890']], ['AWS AKIAIOSFODNN7EXAMPLE', ['AKIAIOSFODNN7EXAMPLE']],
+    ['password is hunter2secret', ['hunter2secret']], ['PASSWORD=Tr0ub4dor&3', ['Tr0ub4dor']],
+    ['Authorization: Bearer abcdefghijklmnop12345', ['abcdefghijklmnop12345']], ['postgres://admin:s3cr3tpw@db.example.com/x', ['s3cr3tpw']],
+    ['mail ravi.kumar@example.com please', ['ravi.kumar']], ['PAN ABCDE1234F', ['ABCDE1234F']], ['GST 27ABCDE1234F1Z5', ['27ABCDE1234F1Z5']],
+    ['Aadhaar 1234 5678 9012', ['1234 5678 9012']], ['card 4111 1111 1111 1111', ['4111 1111 1111 1111']], ['account 123456789012', ['123456789012']],
+  ]
+  for (const [input, secrets] of must) { const out = scrub(input); for (const x of secrets) assert.ok(!out.includes(x), `"${x}" survived in: ${out}`) }
+  const plain = 'Fixed the cart shelf on the PDP, 3 corrections, order BS1042 still open for Monday.'
+  assert.equal(scrub(plain), plain)
+})
+test('enrolment code is heard only when typed as the whole message', () => {
+  assert.equal(codeIn('machau enrol abcdefghijklmnop'.replace('abcdefghijklmnop', 'ABCDEFGHIJKLMNOP')), 'ABCDEFGHIJKLMNOP')
+  assert.equal(codeIn('  Machau Enrol abcdefghijklmnop '), 'ABCDEFGHIJKLMNOP')
+  assert.equal(codeIn('please machau enrol ABCDEFGHIJKLMNOP now'), undefined)
+  assert.equal(codeIn('machau enrol short'), undefined)
+})
+test('collector file: the last good line wins, bad lines are ignored', () => {
+  const tok = 'a'.repeat(43)
+  assert.deepEqual(readCol(`{"member":"old-one","token":"${tok}"}\nnot json\n{"member":"sid","token":"${tok}"}\n`), { member: 'sid', token: tok })
+  assert.equal(readCol('{"member":"Bad Name","token":"x"}'), undefined)
+  assert.equal(readCol(''), undefined)
+})
+test('area from the folder keeps only the last folder name', () => {
+  assert.equal(areaOf('/Users/ravi/MBP/projects/marketing-ads-crm'), 'marketing-ads-crm')
+  assert.equal(areaOf('C:\\Users\\Saloni\\Work\\bamboostan-app'), 'bamboostan-app')
+})

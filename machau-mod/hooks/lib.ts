@@ -275,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.4.1' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.4.2' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -793,14 +793,46 @@ export const heartbeatBody = (a: { member: string; version: string; os: string; 
 export const RECORD_URL = 'https://team-collector.siddharth-90e.workers.dev/record'
 /** A short prompt that looks like a correction ("no", "wrong", "undo"...). Approximate by design. */
 export const looksLikeCorrection = (text: string) => text.length <= 200 && /^\s*(no\b|nope|wrong|not that|that'?s not|undo|revert|stop\b)/i.test(text)
-/** Removes contact details and key-like strings before anything leaves the laptop. */
-export const scrubText = (t: string) =>
-  String(t || '')
-    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]')
-    .replace(/(\+?91[ -]?)?[6-9]\d{9}\b/g, '[phone]')
-    .replace(/\b\d{9,}\b/g, '[number]')
-    .replace(/\b(sk|pk|mf|eyJ|AKIA)[A-Za-z0-9_.-]{12,}/g, '[key]')
-    .slice(0, 3000)
+/** Removes secrets, contact details and customer identifiers before anything leaves the laptop. The collector runs the same
+ *  rules again (work-collector/src/scrub.js); a test on each side holds the same examples. */
+const SCRUB_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[key]'],
+  [/\b(?:sk|pk|rk|mf|ghp|gho|ghs|xox[abp]|AKIA|ASIA|AIza|eyJ)[A-Za-z0-9_.\-]{12,}/g, '[key]'],
+  [/\bBearer\s+[A-Za-z0-9._~+\/=-]{12,}/gi, 'Bearer [key]'],
+  [/([a-z]+:\/\/[^\s:@\/]+:)[^\s@\/]+@/gi, '$1[password]@'],
+  [/\b((?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|auth|otp|pin)\s*(?:is|=|:)\s*)["']?[^\s"',;]{3,}/gi, '$1[secret]'],
+  [/\b[A-Fa-f0-9]{32,}\b/g, '[key]'],
+  [/\b[A-Za-z0-9+\/_-]{40,}={0,2}/g, '[key]'],
+  [/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email]'],
+  [/\b[A-Z]{5}\d{4}[A-Z]\b/g, '[pan]'],
+  [/\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b/g, '[gstin]'],
+  [/\b\d{4}[ -]\d{4}[ -]\d{4}\b/g, '[number]'],
+  [/\b(?:\d[ -]?){13,19}\b/g, '[number]'],
+  [/(?:\+?91[\s-]?)?\b[6-9]\d{4}[\s-]?\d{5}\b/g, '[phone]'],
+  [/(?:\+?91[\s-]?)?\b[6-9]\d{2}[\s-]\d{3}[\s-]\d{4}\b/g, '[phone]'],
+  [/\+\d{1,3}[\s-]?\(?\d{2,5}\)?[\s-]?\d{3,5}[\s-]?\d{3,5}\b/g, '[phone]'],
+  [/\b\d{9,}\b/g, '[number]'],
+]
+export const scrubText = (t: string, max = 3000) => {
+  let s = maskSecrets(String(t ?? '')).text
+  for (const [re, to] of SCRUB_RULES) s = s.replace(re, to)
+  return s.slice(0, max)
+}
+// ---------- enrolment (1.4.2): HQ gives a person a one-time code; typing "machau enrol CODE" swaps it for their own token ----------
+export const ENROL_URL = 'https://team-collector.siddharth-90e.workers.dev/enrol'
+export const enrolCodeIn = (text: string) => /^\s*machau enrol ([A-Za-z2-7]{16})\s*$/i.exec(text)?.[1]?.toUpperCase()
+/** The person's collector file holds one JSON line per enrolment; the last good line wins. */
+export function readCollector(raw: string): { member: string; token: string } | undefined {
+  for (const line of raw.split('\n').reverse()) {
+    try {
+      const j = JSON.parse(line.replace(/^﻿/, '')) as { member?: unknown; token?: unknown }
+      if (typeof j.member === 'string' && /^[a-z0-9][a-z0-9-]{1,40}$/.test(j.member) && typeof j.token === 'string' && /^[A-Za-z0-9_-]{30,200}$/.test(j.token)) return { member: j.member, token: j.token }
+    } catch { /* next line */ }
+  }
+  return undefined
+}
+/** The folder name only (never the path), scrubbed, as the area when the person has not set one. */
+export const areaFromFolder = (cwd: string) => scrubText(String(cwd || '').split(/[\\/]/).filter(Boolean).pop() ?? '', 60)
 export type RecordStats = { turns: number; toolCalls: number; corrections: number; startedAt: number; status: 'finished' | 'open' }
 /** The only fields sent for a record. The summary is the person's own note, scrubbed. */
 export const recordBody = (a: { id: string; member: string; area: string; stats: RecordStats; now: number; summary: string }) =>

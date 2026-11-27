@@ -5,7 +5,7 @@ import {
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
-  COLLECTOR_URL, RECORD_URL, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, type RecordStats,
+  COLLECTOR_URL, RECORD_URL, ENROL_URL, areaFromFolder, enrolCodeIn, readCollector, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, type RecordStats,
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
 import { rulesSection } from './rules.ts'
@@ -113,19 +113,36 @@ const LIVE_NUDGE = (sentence: string) =>
 
 // Work record (1.4.1): per session, counts plus the scrubbed note saved to the Company Brain. Sent every 5 turns and when the
 // note is saved. The token and member id are the heartbeat's: from the keychain (Mac) or MACHAU_COLLECTOR_TOKEN (Windows).
-const recStats = new Map<string, RecordStats>()
-let lastSession = ''
-async function sendRecord($: Run, sid: string, st: RecordStats, summary = '') {
+const COLLECTOR_FILE = '.config/machau-mod/collector.json'
+/** Who this computer reports as: the file written by "machau enrol", else the profile's member id with a keychain (Mac) or environment (Windows) token. */
+async function collectorAuth($: Run): Promise<{ member: string; token: string } | undefined> {
   const o = await os($)
+  const enrolled = readCollector(await readHome($, o, COLLECTOR_FILE))
+  if (enrolled) return enrolled
   const p = await profile($)
-  if (!p.member || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(p.member)) return
+  if (!p.member || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(p.member)) return undefined
   const token = o === 'mac'
     ? (await within($.process.run(['/bin/sh', '-c', 'security find-generic-password -s team-collector-token -w 2>/dev/null']).then(String), 8000, '')).trim()
     : (process.env.MACHAU_COLLECTOR_TOKEN ?? '').trim()
-  if (!token) return
-  const body = recordBody({ id: sid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'session', member: p.member, area: p.area ?? '', stats: st, now: Date.now(), summary })
-  if (o === 'mac') await within($.process.run(['/usr/bin/curl', '-s', '-m', '10', '-X', 'POST', RECORD_URL, '-H', `authorization: Bearer ${token}`, '-H', 'content-type: application/json', '--data', body]).then(String), 12000, '')
-  else await within($.process.run(powershell(`$env:TOKEN='${token}'; Invoke-RestMethod -Method Post -Uri '${RECORD_URL}' -Headers @{Authorization="Bearer $env:TOKEN"} -ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | Out-Null`)).then(String), 12000, '')
+  return token ? { member: p.member, token } : undefined
+}
+/** One POST to the collector, with the token kept out of the process list (a file for curl, an environment variable for PowerShell). */
+async function postCollector($: Run, url: string, token: string | undefined, body: string): Promise<string> {
+  const o = await os($)
+  if (o === 'mac') return String(await within($.process.run(['/bin/sh', '-c', 'if [ -n "$2" ]; then printf "authorization: Bearer %s" "$2" | /usr/bin/curl -s -m 10 -X POST "$1" -H @- -H "content-type: application/json" --data "$3"; else /usr/bin/curl -s -m 10 -X POST "$1" -H "content-type: application/json" --data "$3"; fi', 'machau-mod', url, token ?? '', body]).then(String), 12000, ''))
+  const hdr = token ? `-Headers @{Authorization="Bearer $env:TOKEN"} ` : ''
+  return String(await within($.process.run(powershell(`$env:TOKEN='${token ?? ''}'; Invoke-RestMethod -Method Post -Uri '${url}' ${hdr}-ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(String), 12000, ''))
+}
+
+const recStats = new Map<string, RecordStats>()
+let lastSession = ''
+async function sendRecord($: Run, sid: string, st: RecordStats, summary = '') {
+  const auth = await collectorAuth($)
+  if (!auth) return
+  const p = await profile($)
+  const area = p.area || areaFromFolder(process.cwd())
+  const body = recordBody({ id: sid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'session', member: auth.member, area, stats: st, now: Date.now(), summary })
+  await postCollector($, RECORD_URL, auth.token, body)
 }
 function statsFor(sid: string): RecordStats {
   let s = recStats.get(sid)
@@ -138,20 +155,14 @@ function statsFor(sid: string): RecordStats {
 const HEART = '.local/state/machau-mod/heartbeat.txt'
 async function heartbeat($: Run, set: Switches) {
   const o = await os($)
-  const p = await profile($)
   const today = istDayOf(new Date())
   const last = (await readHome($, o, HEART)).trim().split('\n').pop()?.trim() || undefined
-  if (!heartbeatDue(last, today, p.member)) return
-  const token = o === 'mac'
-    ? (await within($.process.run(['/bin/sh', '-c', 'security find-generic-password -s team-collector-token -w 2>/dev/null']).then(String), 8000, '')).trim()
-    : (process.env.MACHAU_COLLECTOR_TOKEN ?? '').trim()
-  if (!token) return
-  const body = heartbeatBody({ member: p.member!, version: VERSION, os: o, pieces: Object.keys(set).filter(k => (set as Record<string, unknown>)[k] === true), lastActive: new Date().toISOString() })
-  const sent = o === 'mac'
-    ? await within($.process.run(['/usr/bin/curl', '-s', '-m', '10', '-X', 'POST', COLLECTOR_URL, '-H', `authorization: Bearer ${token}`, '-H', 'content-type: application/json', '--data', body]).then(String), 12000, '')
-    : await within($.process.run(powershell(`$env:TOKEN='${token}'; Invoke-RestMethod -Method Post -Uri '${COLLECTOR_URL}' -Headers @{Authorization="Bearer $env:TOKEN"} -ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(String), 12000, '')
-  if (/"ok":\s*true/.test(String(sent))) await appendHome($, o, HEART, today)
-  void record($, 'heartbeat', { sent: /"ok":\s*true/.test(String(sent)), os: o })
+  const auth = await collectorAuth($)
+  if (!auth || !heartbeatDue(last, today, auth.member)) return
+  const body = heartbeatBody({ member: auth.member, version: VERSION, os: o, pieces: Object.keys(set).filter(k => (set as Record<string, unknown>)[k] === true), lastActive: new Date().toISOString() })
+  const sent = await postCollector($, COLLECTOR_URL, auth.token, body)
+  if (/"ok":\s*true/.test(sent)) await appendHome($, o, HEART, today)
+  void record($, 'heartbeat', { sent: /"ok":\s*true/.test(sent), os: o })
 }
 
 export const register: Register = on => {
@@ -200,6 +211,21 @@ export const register: Register = on => {
     const from = (e as { origin?: { kind?: string } }).origin?.kind
     const meta = e as { command?: unknown; isMeta?: unknown; text?: unknown }
     if (meta.command || meta.isMeta || (from !== undefined && !['human', 'user', 'sdk'].includes(from))) return next(e)
+    const code = enrolCodeIn(String(meta.text ?? ''))
+    if (code) {
+      const o = await os($)
+      const got = await postCollector($, ENROL_URL, undefined, JSON.stringify({ code })).catch(() => '')
+      let ok: { ok?: boolean; member?: string; token?: string } = {}
+      try { ok = JSON.parse(got) } catch { /* not json: the collector said no */ }
+      if (ok.ok && ok.member && ok.token) {
+        await appendHome($, o, COLLECTOR_FILE, JSON.stringify({ member: ok.member, token: ok.token }))
+        if (o !== 'windows') void within($.process.run(['/bin/sh', '-c', 'chmod 600 "$HOME/$1"', 'machau-mod', COLLECTOR_FILE]).then(String), 5000, '')
+        void record($, 'enrol', { ok: true, os: o })
+        return next({ ...e, text: 'The machau-mod plugin has enrolled this computer for the team work record. Tell the person in one short line that it worked, and that from now on the plugin sends once a day: their name, plugin version, Mac or Windows and when Claude was last used; and one short record per finished piece of work: what area, a short scrubbed summary, and counts (turns, corrections, minutes). Never the conversation; passwords, keys, phone numbers, emails and customer details are removed first.' } as typeof e)
+      }
+      void record($, 'enrol', { ok: false })
+      return next({ ...e, text: 'The machau-mod plugin could not enrol this computer: the code was not accepted (wrong, used or older than 7 days). Tell the person in one line and that HQ can give a new code.' } as typeof e)
+    }
     const said = plainPrompt(String(meta.text ?? ''))
     wrappedThisTurn = false
     if ((await sw($)).sessionSize && asksShrink(said)) shrinkAsked = true
