@@ -52,6 +52,13 @@ claude plugin marketplace update machau
 claude plugin update machau-mod@machau
 ```
 
+## Team work record (1.4.x): what is sent, and when
+Nothing is sent until HQ gives you a one-time code and you type `machau enrol <code>` in Claude. After that:
+- **Once a day:** your name, the plugin version, Mac or Windows, the pieces switched on, and when Claude was last used. Nothing else.
+- **One short record per piece of work:** the area (the folder name only), a short summary of what was asked, done and left, and counts (turns, tool calls, corrections, minutes, finished or open). The summary is the note Claude already writes at the end of a task.
+- **Never** the conversation, file contents, or file paths. Passwords, keys, phone numbers, emails, PAN, GSTIN, Aadhaar and card numbers are removed on your computer first, and again on the collector. Records are kept 90 days; only Sid and Divya can read them.
+- Your token lives in `.config/machau-mod/collector.json` in your home folder. To stop: delete that file (or set `"switches": {"heartbeat": false, "workRecord": false}` in your profile).
+
 ## Your own switches
 Create `.config/machau-mod/profile.json` in your home folder, for example `{ "switches": { "autoShrink": false, "noClaudeInChrome": true } }`. It is read once per session. The names are in `machau-mod/hooks/register.ts`.
 
