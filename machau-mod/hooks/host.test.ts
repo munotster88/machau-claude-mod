@@ -73,3 +73,10 @@ test('reads this computer and reaches a verdict', async () => {
   assert.ok(reading.free_pct !== null && reading.free_pct >= 0 && reading.free_pct <= 100)
   assert.ok(['ok', 'wait', 'full'].includes(decide(reading).verdict))
 })
+
+test('process output is read from stdout (a result object must never turn into "[object Object]")', async () => {
+  const { text } = await import('./host.ts')
+  assert.equal(text({ stdout: 'hello' }), 'hello')
+  assert.equal(text('plain'), 'plain')
+  assert.equal(text(undefined), '')
+})

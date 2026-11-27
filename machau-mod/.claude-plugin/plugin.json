@@ -1,5 +1,5 @@
 {
   "name": "machau-mod",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Machau's Claude mod, for Mac and Windows: one small piece per recurring problem (secret mask, context trim, model routing, task-list ticks, session shrink, capacity check, Company Brain notes, no blank Chrome, task inbox, role kit check, company rules; optional live-claim guard and no Claude in Chrome)"
 }

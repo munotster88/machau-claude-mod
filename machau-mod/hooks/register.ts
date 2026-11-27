@@ -9,7 +9,7 @@ import {
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
 import { rulesSection } from './rules.ts'
-import { appendHome, detect, powershell, readHome, readMachine, within, type Os, type Run } from './host.ts'
+import { appendHome, detect, powershell, readHome, readMachine, text, within, type Os, type Run } from './host.ts'
 
 // Machau's Claude mod: one small piece per recurring problem, each with a switch.
 // Add a piece: write its logic in lib.ts with a test, hook it here, add a switch and a README line.
@@ -122,16 +122,16 @@ async function collectorAuth($: Run): Promise<{ member: string; token: string } 
   const p = await profile($)
   if (!p.member || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(p.member)) return undefined
   const token = o === 'mac'
-    ? (await within($.process.run(['/bin/sh', '-c', 'security find-generic-password -s team-collector-token -w 2>/dev/null']).then(String), 8000, '')).trim()
+    ? (await within($.process.run(['/bin/sh', '-c', 'security find-generic-password -s team-collector-token -w 2>/dev/null']).then(text), 8000, '')).trim()
     : (process.env.MACHAU_COLLECTOR_TOKEN ?? '').trim()
   return token ? { member: p.member, token } : undefined
 }
 /** One POST to the collector, with the token kept out of the process list (a file for curl, an environment variable for PowerShell). */
 async function postCollector($: Run, url: string, token: string | undefined, body: string): Promise<string> {
   const o = await os($)
-  if (o === 'mac') return String(await within($.process.run(['/bin/sh', '-c', 'if [ -n "$2" ]; then printf "authorization: Bearer %s" "$2" | /usr/bin/curl -s -m 10 -X POST "$1" -H @- -H "content-type: application/json" --data "$3"; else /usr/bin/curl -s -m 10 -X POST "$1" -H "content-type: application/json" --data "$3"; fi', 'machau-mod', url, token ?? '', body]).then(String), 12000, ''))
+  if (o === 'mac') return String(await within($.process.run(['/bin/sh', '-c', 'if [ -n "$2" ]; then printf "authorization: Bearer %s" "$2" | /usr/bin/curl -s -m 10 -X POST "$1" -H @- -H "content-type: application/json" --data "$3"; else /usr/bin/curl -s -m 10 -X POST "$1" -H "content-type: application/json" --data "$3"; fi', 'machau-mod', url, token ?? '', body]).then(text), 12000, ''))
   const hdr = token ? `-Headers @{Authorization="Bearer $env:TOKEN"} ` : ''
-  return String(await within($.process.run(powershell(`$env:TOKEN='${token ?? ''}'; Invoke-RestMethod -Method Post -Uri '${url}' ${hdr}-ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(String), 12000, ''))
+  return String(await within($.process.run(powershell(`$env:TOKEN='${token ?? ''}'; Invoke-RestMethod -Method Post -Uri '${url}' ${hdr}-ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(text), 12000, ''))
 }
 
 const recStats = new Map<string, RecordStats>()
@@ -219,7 +219,7 @@ export const register: Register = on => {
       try { ok = JSON.parse(got) } catch { /* not json: the collector said no */ }
       if (ok.ok && ok.member && ok.token) {
         await appendHome($, o, COLLECTOR_FILE, JSON.stringify({ member: ok.member, token: ok.token }))
-        if (o !== 'windows') void within($.process.run(['/bin/sh', '-c', 'chmod 600 "$HOME/$1"', 'machau-mod', COLLECTOR_FILE]).then(String), 5000, '')
+        if (o !== 'windows') void within($.process.run(['/bin/sh', '-c', 'chmod 600 "$HOME/$1"', 'machau-mod', COLLECTOR_FILE]).then(text), 5000, '')
         void record($, 'enrol', { ok: true, os: o })
         return next({ ...e, text: 'The machau-mod plugin has enrolled this computer for the team work record. Tell the person in one short line that it worked, and that from now on the plugin sends once a day: their name, plugin version, Mac or Windows and when Claude was last used; and one short record per finished piece of work: what area, a short scrubbed summary, and counts (turns, corrections, minutes). Never the conversation; passwords, keys, phone numbers, emails and customer details are removed first.' } as typeof e)
       }
