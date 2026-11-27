@@ -275,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.3.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.4.0' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -755,7 +755,7 @@ export const isMachauChatTool = (tool: string, name?: string) => {
 }
 
 /** The profile file, read tolerantly: a bad file means no settings, never an error. */
-export type Profile = { switches?: Record<string, boolean>; founderEmail?: string; desks?: { techAccess?: string } }
+export type Profile = { switches?: Record<string, boolean>; founderEmail?: string; desks?: { techAccess?: string }; member?: string }
 export function readProfile(raw: string): Profile {
   try {
     const p = JSON.parse(raw.replace(/^﻿/, '')) as Profile
@@ -773,3 +773,17 @@ export const techDeskOf = (p: Profile) =>
 
 /** The connectors any role's kit names: only calls to these (and the kit-check message) cost a look at the role file. */
 export const KIT_SERVERS: ReadonlySet<string> = new Set(Object.values(ROLE_KITS).flat())
+
+
+// ---------- heartbeat (1.4.0): once a day, who has the plugin, which version, which computer, last use. No content. ----------
+// The team collector is a Cloudflare Worker that takes only these fields. The token is per person and is read from this
+// person's own keychain (Mac) or the MACHAU_COLLECTOR_TOKEN environment variable (Windows). It is never in this repo.
+export const COLLECTOR_URL = 'https://team-collector.siddharth-90e.workers.dev/heartbeat'
+/** The calendar day in India, as YYYY-MM-DD. */
+export const istDayOf = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 10)
+/** Send at most once a day, and only for a member id the person has set. */
+export const heartbeatDue = (lastDay: string | undefined, today: string, member: string | undefined) =>
+  !!member && /^[a-z0-9][a-z0-9-]{1,40}$/.test(member) && lastDay !== today
+/** The only fields sent. No conversation, no file names, no folders, no prompts. */
+export const heartbeatBody = (a: { member: string; version: string; os: string; pieces: readonly string[]; lastActive: string }) =>
+  JSON.stringify({ member: a.member, plugin_version: a.version, os: a.os, pieces: a.pieces.slice(0, 40), last_active: a.lastActive })
