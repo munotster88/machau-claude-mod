@@ -275,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.4.4' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.5.0' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -833,11 +833,38 @@ export function readCollector(raw: string): { member: string; token: string } | 
 }
 /** The folder name only (never the path), scrubbed, as the area when the person has not set one. */
 export const areaFromFolder = (cwd: string) => scrubText(String(cwd || '').split(/[\\/]/).filter(Boolean).pop() ?? '', 60)
-export type RecordStats = { turns: number; toolCalls: number; corrections: number; startedAt: number; status: 'finished' | 'open'; asked?: string }
-/** The only fields sent for a record. The summary is the person's own note, scrubbed. */
-export const recordBody = (a: { id: string; member: string; area: string; stats: RecordStats; now: number; summary: string }) =>
+export type RecordStats = { turns: number; toolCalls: number; corrections: number; startedAt: number; status: 'finished' | 'open'; records: number; toolCallsAtLast: number; lastAskAt: number; awaiting: boolean }
+export const newStats = (): RecordStats => ({ turns: 0, toolCalls: 0, corrections: 0, startedAt: Date.now(), status: 'open', records: 0, toolCallsAtLast: 0, lastAskAt: 0, awaiting: false })
+/** A record is asked for after real work: at least 2 turns and 2 more tool calls since the last record, 15 minutes apart, 3 per session at most. */
+export const recordDue = (st: RecordStats, now: number) =>
+  !st.awaiting && st.records < 3 && st.turns >= 2 && st.toolCalls - st.toolCallsAtLast >= 2 && now - st.lastAskAt >= 15 * 60_000
+/** What the person's own Claude is asked to write. About 170 tokens in, about 90 out. Visible to the person in the session. */
+export const RECORD_ASK =
+  '[machau-mod work record] Write a short work record of the work done in this session since the last record, for the team manager. ' +
+  'Reply with ONLY one line, exactly: RECORD {"task":"...","done":"...","left":"...","area":"...","topic":"...","status":"finished|open|blocked"} ' +
+  'Plain words, one short sentence each (under 25 words). Describe the work, not the people: no customer names, phone numbers, addresses, emails, passwords, keys or personal details. ' +
+  'area = the project or product; topic = the project plus two or three key nouns of the task, lowercase, for example "sutra courier booking". ' +
+  'If nothing real was worked on, reply exactly: RECORD {"skip":true}'
+const STOP_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'that', 'this', 'fix', 'add', 'update', 'new', 'work', 'task', 'session', 'claude', 'page', 'file', 'check', 'make', 'get', 'set', 'run', 'use', 'are', 'was', 'not', 'one', 'two'])
+export const normaliseTopic = (t: string) => [...new Set(String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length > 2 && !STOP_WORDS.has(w)))].slice(0, 6).join(' ')
+export type WrittenRecord = { skip: true } | { task: string; done: string; left: string; area: string; topic: string; status: 'finished' | 'open' | 'blocked' }
+/** Reads Claude's reply to RECORD_ASK. Every text is scrubbed here, on the laptop; the collector scrubs again. */
+export function parseRecordReply(answer: string): WrittenRecord | undefined {
+  const m = /RECORD\s*(\{[\s\S]*\})/.exec(String(answer || ''))
+  if (!m) return undefined
+  try {
+    const j = JSON.parse(m[1]) as Record<string, unknown>
+    if (j.skip === true) return { skip: true }
+    const t = (v: unknown, max: number) => scrubText(String(v ?? ''), max).replace(/\s+/g, ' ').trim()
+    const task = t(j.task, 300), done = t(j.done, 300)
+    if (!task && !done) return undefined
+    return { task, done, left: t(j.left, 300), area: t(j.area, 60), topic: normaliseTopic(t(j.topic, 120)), status: j.status === 'finished' || j.status === 'blocked' ? j.status : 'open' }
+  } catch { return undefined }
+}
+/** The only fields sent for a record. The person's own words are never in it. */
+export const recordBody = (a: { id: string; member: string; written: Exclude<WrittenRecord, { skip: true }>; stats: RecordStats; now: number }) =>
   JSON.stringify({
-    id: a.id, member: a.member, area: a.area.slice(0, 60), status: a.stats.status,
-    turns: a.stats.turns, tool_calls: a.stats.toolCalls, minutes: Math.round((a.now - a.stats.startedAt) / 60_000),
-    corrections: a.stats.corrections, kind: 'other', summary: scrubText([a.stats.asked ? `Asked: ${a.stats.asked.replace(/\s+/g, ' ').slice(0, 200)}` : '', a.summary].filter(Boolean).join(' | ')),
+    id: a.id, member: a.member, area: a.written.area, status: a.written.status, turns: a.stats.turns, tool_calls: a.stats.toolCalls,
+    minutes: Math.round((a.now - a.stats.startedAt) / 60_000), corrections: a.stats.corrections, kind: 'other',
+    task: a.written.task, done: a.written.done, left: a.written.left, topic: a.written.topic,
   })

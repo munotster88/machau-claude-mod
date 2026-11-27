@@ -5,7 +5,7 @@ import {
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
-  COLLECTOR_URL, RECORD_URL, ENROL_URL, areaFromFolder, enrolCodeIn, readCollector, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, type RecordStats,
+  COLLECTOR_URL, RECORD_URL, ENROL_URL, enrolCodeIn, readCollector, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, newStats, parseRecordReply, recordDue, RECORD_ASK, type RecordStats,
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
 import { rulesSection } from './rules.ts'
@@ -136,20 +136,21 @@ async function postCollector($: Run, url: string, token: string | undefined, bod
 
 const recStats = new Map<string, RecordStats>()
 let lastSession = ''
-async function sendRecord($: Run, sid: string, st: RecordStats, summary = '') {
+const RECORDS_LOG = '.local/state/machau-mod/records.jsonl'
+async function sendRecord($: Run, sid: string, st: RecordStats, written: Parameters<typeof recordBody>[0]['written']) {
   const auth = await collectorAuth($)
   if (!auth) { void record($, 'workRecord', { sent: false, why: 'not enrolled' }); return }
   const p = await profile($)
   const o = await os($)
-  const cwd = p.area ? '' : (await within($.process.run(o === 'windows' ? powershell('[Console]::Out.Write((Get-Location).Path)') : ['/bin/sh', '-c', 'pwd']).then(text), 6000, '')).trim()
-  const area = p.area || areaFromFolder(cwd)
-  const body = recordBody({ id: sid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'session', member: auth.member, area, stats: st, now: Date.now(), summary })
+  const body = recordBody({ id: `${sid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 70) || 'session'}-${st.records}`, member: auth.member, written: p.area ? { ...written, area: p.area } : written, stats: st, now: Date.now() })
+  // What was sent in the person's name is kept on their own computer, and "machau records" prints the last few.
+  await appendHome($, o, RECORDS_LOG, JSON.stringify({ at: new Date().toISOString(), ...JSON.parse(body) }))
   const sent = await postCollector($, RECORD_URL, auth.token, body)
-  void record($, 'workRecord', { sent: /"ok":\s*true/.test(sent), turns: st.turns, status: st.status })
+  void record($, 'workRecord', { sent: /"ok":\s*true/.test(sent), n: st.records })
 }
 function statsFor(sid: string): RecordStats {
   let s = recStats.get(sid)
-  if (!s) { s = { turns: 0, toolCalls: 0, corrections: 0, startedAt: Date.now(), status: 'open' }; recStats.set(sid, s) }
+  if (!s) { s = newStats(); recStats.set(sid, s) }
   return s
 }
 
@@ -229,9 +230,13 @@ export const register: Register = on => {
       void record($, 'enrol', { ok: false })
       return next({ ...e, text: 'The machau-mod plugin could not enrol this computer: the code was not accepted (wrong, used or older than 7 days). Tell the person in one line and that HQ can give a new code.' } as typeof e)
     }
+    if (/^\s*machau records\s*$/i.test(String(meta.text ?? ''))) {
+      const o = await os($)
+      const lines = (await readHome($, o, RECORDS_LOG)).trim().split('\n').filter(Boolean).slice(-5)
+      return next({ ...e, text: lines.length ? `The person asked what the machau-mod plugin sent in their name. Show these records, newest last, each as task / done / left / area / status, and say they are all that was sent besides the daily heartbeat (name, version, computer, last use):\n${lines.join('\n')}` : 'The person asked what the machau-mod plugin sent in their name. Nothing has been sent from this computer yet.' } as typeof e)
+    }
     const said = plainPrompt(String(meta.text ?? ''))
     if (lastSession === '') lastSession = (await $.session.id().catch(() => '')) || `p${Date.now().toString(36)}`
-    if (lastSession && (await sw($)).workRecord) { const st = statsFor(lastSession); if (!st.asked && said.trim().length > 3) st.asked = said }
     wrappedThisTurn = false
     if ((await sw($)).sessionSize && asksShrink(said)) shrinkAsked = true
     if ((await sw($)).capacityGate && asksOverride(said)) {
@@ -345,7 +350,7 @@ export const register: Register = on => {
     if (isBrainCapture(tool)) {
       // A saved note clears the count. A refusal that names the person's identity (an owner using the member tool is sent to
       // the other one, so only a missing department counts) stops the reminders for this session.
-      if (!r.isError) { sharedSinceNote = 0; if (lastSession) { const st = statsFor(lastSession); st.status = 'finished'; void sendRecord($, lastSession, st, String((e as { input?: { content?: unknown } }).input?.content ?? '')).catch(() => {}) } }
+      if (!r.isError) { sharedSinceNote = 0;  }
       else if (/department|member_access_off|not permitted/i.test(String(r.text ?? '')) && !/requires_member_identity/.test(String(r.text ?? ''))) {
         brainRefused = true
         void record($, 'brainCapture', { refused: String(r.text ?? '').slice(0, 120) })
@@ -417,11 +422,28 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
-    void record($, 'turn', { reason: e.reason, agent: e.agentId !== undefined, session: !!lastSession })
+    void record($, 'turn', { reason: e.reason, agent: e.agentId !== undefined, tools: lastSession ? statsFor(lastSession).toolCalls : 0 })
     if (e.agentId !== undefined || e.reason !== 'answer') return r
     const set = await sw($)
     if (set.heartbeat) void heartbeat($, set).catch(() => {})
-    if (set.workRecord && lastSession) { const st = statsFor(lastSession); st.turns++; if (st.turns === 1 || st.turns % 5 === 0) void sendRecord($, lastSession, st).catch(err => record($, 'workRecord', { sent: false, error: String(err).slice(0, 160) })) }
+    if (set.workRecord && lastSession) {
+      const st = statsFor(lastSession)
+      st.turns++
+      if (st.awaiting) {
+        // This reply is the written record the plugin asked Claude for: send it (scrubbed), once.
+        st.awaiting = false
+        const w = parseRecordReply(String(e.answer ?? ''))
+        if (w && !('skip' in w)) { st.records++; st.toolCallsAtLast = st.toolCalls; void sendRecord($, lastSession, st, w).catch(err => record($, 'workRecord', { sent: false, error: String(err).slice(0, 160) })) }
+        return r
+      }
+      if (recordDue(st, Date.now()) && (await collectorAuth($))) { // only for people who enrolled
+        st.awaiting = true
+        st.lastAskAt = Date.now()
+        void record($, 'workRecord', { asked: true, turns: st.turns, toolCalls: st.toolCalls })
+        void $.prompt.submit({ text: RECORD_ASK }).catch(() => { st.awaiting = false })
+        return r
+      }
+    }
     // One nudge per turn end at most. Not awaited: a plugin's prompt runs once the session is idle, after this hook returns.
     const nudge = (piece: string, detail: unknown, text: string) => {
       void record($, piece, detail)

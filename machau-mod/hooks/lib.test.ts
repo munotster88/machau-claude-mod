@@ -490,12 +490,6 @@ test('scrubbing removes contact details and key-like strings', () => {
   assert.equal(out.includes('sk_test'), false)
   assert.equal(out.includes('123456789012'), false)
 })
-test('a record carries counts and the scrubbed note only', () => {
-  const body = JSON.parse(rb({ id: 'abc12345', member: 'member-a', area: 'pilot', stats: { turns: 5, toolCalls: 9, corrections: 1, startedAt: 0, status: 'finished' }, now: 600_000, summary: 'Done. Contact test@example.com' }))
-  assert.deepEqual(Object.keys(body).sort(), ['area','corrections','id','kind','member','minutes','status','summary','tool_calls','turns'])
-  assert.equal(body.minutes, 10)
-  assert.equal(body.summary.includes('@'), false)
-})
 
 // ---------- 1.4.2: the same scrub examples as the collector, and enrolment ----------
 import { areaFromFolder as areaOf, enrolCodeIn as codeIn, readCollector as readCol } from './lib.ts'
@@ -530,8 +524,37 @@ test('area from the folder keeps only the last folder name', () => {
   assert.equal(areaOf('C:\\Users\\Saloni\\Work\\bamboostan-app'), 'bamboostan-app')
 })
 
-test('record carries the first request (200 characters, scrubbed) ahead of the note', () => {
-  const b = JSON.parse(rb({ id: 'abcdefgh12', member: 'sid', area: 'x', now: 61_000, summary: 'note body', stats: { turns: 2, toolCalls: 3, corrections: 0, startedAt: 1_000, status: 'open', asked: 'Mail ravi@example.com the sheet\n  and call 9876543210' } }))
-  assert.equal(b.summary, 'Asked: Mail [email] the sheet and call [phone] | note body')
-  assert.equal(b.minutes, 1)
+
+// ---------- 1.5.0: the written record ----------
+import { parseRecordReply as parseRec, recordDue as due, newStats as fresh, normaliseTopic as topicOf, recordBody as recBody, RECORD_ASK as ASK } from './lib.ts'
+test('the written record is read from the reply, scrubbed, with a normalised topic', () => {
+  const w = parseRec('RECORD {"task":"Fix courier booking for the order of ravi@example.com, phone 98765 43210","done":"Booking works; password is hunter2xyz was removed","left":"Cancel flow","area":"Sutra","topic":"Sutra courier booking fix","status":"finished"}')
+  assert.ok(w && !('skip' in w))
+  const r = w as Exclude<typeof w, { skip: true } | undefined>
+  assert.ok(!/ravi|98765|hunter2/.test(JSON.stringify(r)), JSON.stringify(r))
+  assert.equal(r.topic, 'sutra courier booking')
+  assert.equal(r.status, 'finished')
 })
+test('skip, junk and empty replies make no record', () => {
+  assert.deepEqual(parseRec('RECORD {"skip":true}'), { skip: true })
+  assert.equal(parseRec('Sure! here you go'), undefined)
+  assert.equal(parseRec('RECORD {"task":"","done":""}'), undefined)
+  assert.equal(parseRec('RECORD {broken'), undefined)
+})
+test('a record is asked for after real work only, 3 per session, 15 minutes apart', () => {
+  const st = fresh(); const t0 = 1_000_000_000_000
+  assert.equal(due(st, t0), false)
+  st.turns = 2; st.toolCalls = 2
+  assert.equal(due(st, t0), true)
+  st.lastAskAt = t0; st.toolCallsAtLast = 2
+  assert.equal(due({ ...st, toolCalls: 20 }, t0 + 60_000), false)
+  assert.equal(due({ ...st, toolCalls: 20 }, t0 + 16 * 60_000), true)
+  assert.equal(due({ ...st, toolCalls: 20, records: 3 }, t0 + 99 * 60_000), false)
+  assert.ok(ASK.includes('no customer names'))
+})
+test('the body has the written lines and counts, and no raw prompt or summary field', () => {
+  const b = JSON.parse(recBody({ id: 'a1b2c3d4-0', member: 'sid', stats: { ...fresh(), startedAt: 0, turns: 3, toolCalls: 9 }, now: 120_000, written: { task: 't', done: 'd', left: 'l', area: 'x', topic: 'x y', status: 'open' } }))
+  assert.deepEqual(Object.keys(b).sort(), ['area', 'corrections', 'done', 'id', 'kind', 'left', 'member', 'minutes', 'status', 'task', 'tool_calls', 'topic', 'turns'])
+  assert.equal(b.minutes, 2)
+})
+test('topics drop filler words and keep six at most', () => assert.equal(topicOf('Fix the Sutra courier booking page for Delhivery and Bluedart extra words here'), 'sutra courier booking delhivery bluedart extra'))
