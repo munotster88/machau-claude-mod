@@ -5,7 +5,7 @@
 export type Run = { process: { run: (argv: readonly string[]) => Promise<unknown> } }
 export type Os = 'mac' | 'windows' | 'linux' | 'unknown'
 
-const text = (r: unknown) => (typeof r === 'string' ? r : String((r as { stdout?: unknown })?.stdout ?? ''))
+export const text = (r: unknown) => (typeof r === 'string' ? r : String((r as { stdout?: unknown })?.stdout ?? ''))
 
 /** The promise's value, or `otherwise` when it takes longer than `ms` or fails. */
 export function within<T>(p: Promise<T>, ms: number, otherwise: T): Promise<T> {
