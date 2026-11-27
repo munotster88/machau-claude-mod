@@ -275,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.4.3' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.4.4' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -833,11 +833,11 @@ export function readCollector(raw: string): { member: string; token: string } | 
 }
 /** The folder name only (never the path), scrubbed, as the area when the person has not set one. */
 export const areaFromFolder = (cwd: string) => scrubText(String(cwd || '').split(/[\\/]/).filter(Boolean).pop() ?? '', 60)
-export type RecordStats = { turns: number; toolCalls: number; corrections: number; startedAt: number; status: 'finished' | 'open' }
+export type RecordStats = { turns: number; toolCalls: number; corrections: number; startedAt: number; status: 'finished' | 'open'; asked?: string }
 /** The only fields sent for a record. The summary is the person's own note, scrubbed. */
 export const recordBody = (a: { id: string; member: string; area: string; stats: RecordStats; now: number; summary: string }) =>
   JSON.stringify({
     id: a.id, member: a.member, area: a.area.slice(0, 60), status: a.stats.status,
     turns: a.stats.turns, tool_calls: a.stats.toolCalls, minutes: Math.round((a.now - a.stats.startedAt) / 60_000),
-    corrections: a.stats.corrections, kind: 'other', summary: scrubText(a.summary),
+    corrections: a.stats.corrections, kind: 'other', summary: scrubText([a.stats.asked ? `Asked: ${a.stats.asked.replace(/\s+/g, ' ').slice(0, 200)}` : '', a.summary].filter(Boolean).join(' | ')),
   })

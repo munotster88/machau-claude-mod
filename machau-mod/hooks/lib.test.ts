@@ -529,3 +529,9 @@ test('area from the folder keeps only the last folder name', () => {
   assert.equal(areaOf('/Users/ravi/MBP/projects/marketing-ads-crm'), 'marketing-ads-crm')
   assert.equal(areaOf('C:\\Users\\Saloni\\Work\\bamboostan-app'), 'bamboostan-app')
 })
+
+test('record carries the first request (200 characters, scrubbed) ahead of the note', () => {
+  const b = JSON.parse(rb({ id: 'abcdefgh12', member: 'sid', area: 'x', now: 61_000, summary: 'note body', stats: { turns: 2, toolCalls: 3, corrections: 0, startedAt: 1_000, status: 'open', asked: 'Mail ravi@example.com the sheet\n  and call 9876543210' } }))
+  assert.equal(b.summary, 'Asked: Mail [email] the sheet and call [phone] | note body')
+  assert.equal(b.minutes, 1)
+})

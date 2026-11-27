@@ -123,7 +123,7 @@ async function collectorAuth($: Run): Promise<{ member: string; token: string } 
   if (!p.member || !/^[a-z0-9][a-z0-9-]{1,40}$/.test(p.member)) return undefined
   const token = o === 'mac'
     ? (await within($.process.run(['/bin/sh', '-c', 'security find-generic-password -s team-collector-token -w 2>/dev/null']).then(text), 8000, '')).trim()
-    : (process.env.MACHAU_COLLECTOR_TOKEN ?? '').trim()
+    : (await within($.process.run(powershell('[Console]::Out.Write($env:MACHAU_COLLECTOR_TOKEN)')).then(text), 8000, '')).trim()
   return token ? { member: p.member, token } : undefined
 }
 /** One POST to the collector, with the token kept out of the process list (a file for curl, an environment variable for PowerShell). */
@@ -138,11 +138,14 @@ const recStats = new Map<string, RecordStats>()
 let lastSession = ''
 async function sendRecord($: Run, sid: string, st: RecordStats, summary = '') {
   const auth = await collectorAuth($)
-  if (!auth) return
+  if (!auth) { void record($, 'workRecord', { sent: false, why: 'not enrolled' }); return }
   const p = await profile($)
-  const area = p.area || areaFromFolder(process.cwd())
+  const o = await os($)
+  const cwd = p.area ? '' : (await within($.process.run(o === 'windows' ? powershell('[Console]::Out.Write((Get-Location).Path)') : ['/bin/sh', '-c', 'pwd']).then(text), 6000, '')).trim()
+  const area = p.area || areaFromFolder(cwd)
   const body = recordBody({ id: sid.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80) || 'session', member: auth.member, area, stats: st, now: Date.now(), summary })
-  await postCollector($, RECORD_URL, auth.token, body)
+  const sent = await postCollector($, RECORD_URL, auth.token, body)
+  void record($, 'workRecord', { sent: /"ok":\s*true/.test(sent), turns: st.turns, status: st.status })
 }
 function statsFor(sid: string): RecordStats {
   let s = recStats.get(sid)
@@ -227,6 +230,8 @@ export const register: Register = on => {
       return next({ ...e, text: 'The machau-mod plugin could not enrol this computer: the code was not accepted (wrong, used or older than 7 days). Tell the person in one line and that HQ can give a new code.' } as typeof e)
     }
     const said = plainPrompt(String(meta.text ?? ''))
+    if (lastSession === '') lastSession = (await $.session.id().catch(() => '')) || `p${Date.now().toString(36)}`
+    if (lastSession && (await sw($)).workRecord) { const st = statsFor(lastSession); if (!st.asked && said.trim().length > 3) st.asked = said }
     wrappedThisTurn = false
     if ((await sw($)).sessionSize && asksShrink(said)) shrinkAsked = true
     if ((await sw($)).capacityGate && asksOverride(said)) {
@@ -277,7 +282,7 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
-    if ((await sw($)).workRecord) { lastSession = await $.session.id().catch(() => '') || lastSession; if (lastSession) statsFor(lastSession).toolCalls++ }
+    if ((await sw($)).workRecord) { lastSession = (await $.session.id().catch(() => '')) || lastSession || `p${Date.now().toString(36)}`; if (lastSession) statsFor(lastSession).toolCalls++ }
     if ((await sw($)).noClaudeInChrome && isClaudeInChrome(tool)) {
       void record($, 'noClaudeInChrome', tool)
       return { deny: chromeDeny((await os($)) === 'mac') }
@@ -412,10 +417,11 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
+    void record($, 'turn', { reason: e.reason, agent: e.agentId !== undefined, session: !!lastSession })
     if (e.agentId !== undefined || e.reason !== 'answer') return r
     const set = await sw($)
     if (set.heartbeat) void heartbeat($, set).catch(() => {})
-    if (set.workRecord && lastSession) { const st = statsFor(lastSession); st.turns++; if (st.turns % 5 === 0) void sendRecord($, lastSession, st).catch(() => {}) }
+    if (set.workRecord && lastSession) { const st = statsFor(lastSession); st.turns++; if (st.turns === 1 || st.turns % 5 === 0) void sendRecord($, lastSession, st).catch(err => record($, 'workRecord', { sent: false, error: String(err).slice(0, 160) })) }
     // One nudge per turn end at most. Not awaited: a plugin's prompt runs once the session is idle, after this hook returns.
     const nudge = (piece: string, detail: unknown, text: string) => {
       void record($, piece, detail)
