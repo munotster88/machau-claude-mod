@@ -1,6 +1,6 @@
 import type { Register } from 'claude-code'
 import {
-  CAPACITY, KEEP_ON_SHRINK, brainNudge, brainSection, brainTools, isBrainCapture, sharesWork, type BrainTools, ON_DEMAND_INDEX, PLAN_NONE, ROUTED_TYPES, ROUTE_LABELS, SIZE_NUDGE, VERSION, WRAP_TOOL, asksOverride, asksShrink, briefFor,
+  CAPACITY, KEEP_ON_SHRINK, brainNudge, brainSection, folderMark, brainTools, isBrainCapture, sharesWork, type BrainTools, ON_DEMAND_INDEX, PLAN_NONE, ROUTED_TYPES, ROUTE_LABELS, SIZE_NUDGE, VERSION, WRAP_TOOL, asksOverride, asksShrink, briefFor,
   capacityDeny, chromeDeny, decide, hasLine, hasLiveVerdict, holdReason, isClaudeInChrome, isDeployish, isPlaywright, lastNumberFor, liveClaim,
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
@@ -139,6 +139,10 @@ async function postCollector($: Run, url: string, token: string | undefined, bod
   return String(await within($.process.run(powershell(`$env:TOKEN='${token ?? ''}'; Invoke-RestMethod -Method Post -Uri '${url}' ${hdr}-ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(text), 12000, ''))
 }
 
+let folderP: Promise<ReturnType<typeof folderMark>> | undefined
+/** The company mark of the folder this session runs in, read once through the shell (Mac and Windows). */
+const folderNow = ($: Run) => (folderP ??= os($).then(async o =>
+  folderMark((await within($.process.run(o === 'windows' ? powershell('[Console]::Out.Write((Get-Location).Path)') : ['/bin/sh', '-c', 'pwd']).then(text), 6000, '')).trim())).catch(() => folderMark('')))
 let seenConnectors: string[] = [] // company connector names this session has, from the session's tool list
 const chatsRead = new Set<string>() // chats whose messages this session has read
 const recStats = new Map<string, RecordStats>()
@@ -508,7 +512,7 @@ export const register: Register = on => {
     if (set.brainCapture && brain && !brainRefused && sharedSinceNote > 0) {
       const shared = sharedSinceNote
       sharedSinceNote = 0 // one reminder per piece of shared work, whatever Claude answers
-      return nudge('brainCapture', { reminded: true, shared }, brainNudge(brain))
+      return nudge('brainCapture', { reminded: true, shared }, brainNudge(brain, await folderNow($)))
     }
     // Task inbox: the mod cannot wake an idle session, so the check rides on the end of a turn, at most every 30 minutes.
     if (set.taskInbox && inboxHere && inboxDue(lastInbox, Date.now())) {
@@ -544,7 +548,7 @@ export const register: Register = on => {
     let sections = r.sections
     if (set.brainCapture) {
       brain = brainTools(e.tools)
-      if (brain) sections = [...sections, { id: 'machau-mod:company-brain', text: brainSection(brain), scope: 'session' as const }]
+      if (brain) sections = [...sections, { id: 'machau-mod:company-brain', text: brainSection(brain, await folderNow($)), scope: 'session' as const }]
     }
     // Company rules, the task inbox, and the role kit (the kit once per session, and once a day per connector).
     if (set.companyRules) sections = [...sections, { id: 'machau-mod:company-rules', text: rulesSection(founderEmailOf(await profile($))), scope: 'session' as const }]

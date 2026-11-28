@@ -623,26 +623,48 @@ export function brainTools(tools: readonly string[]): BrainTools | undefined {
   return { capture: capture ?? ownerCapture!, ...(capture && ownerCapture ? { ownerCapture } : {}), ...(ask ? { ask } : {}) }
 }
 export const isBrainCapture = (tool: string) => /__brain_(?:department_capture|capture_context)$/.test(tool)
+/** Which company a session's folder belongs to, and whether it is a private folder. Company Brain asks every note to say both. */
+export type FolderMark = { company?: 'mbp' | 'bil' | 'personal'; confidential: boolean }
+export function folderMark(cwd: string): FolderMark {
+  const parts = String(cwd || '').split(/[\\/]+/).filter(Boolean)
+  const at = (name: string) => parts.findIndex(p => p.toLowerCase() === name)
+  const mbp = at('mbp'), bil = at('bil'), personal = at('personal')
+  if (mbp >= 0) return { company: 'mbp', confidential: (parts[mbp + 1] ?? '').toLowerCase() === 'private' }
+  if (bil >= 0) return { company: 'bil', confidential: false }
+  if (personal >= 0) return { company: 'personal', confidential: false }
+  return { confidential: false }
+}
+/** The one line that tells Claude what to pass for the folder this session runs in. */
+export function folderLine(m: FolderMark): string {
+  if (m.company === 'bil') return 'This session runs in a BIL folder: BIL work never goes to this Company Brain. Save no note.'
+  if (m.company === 'personal') return 'This session runs in a personal folder: personal work is not saved. Save no note.'
+  if (m.company === 'mbp') return `This session runs in an MBP folder: pass company "mbp" and confidential ${m.confidential ? 'true (a private folder)' : 'false, unless the note is about the books, investors or funding, payroll or anyone\'s pay, legal matters, loans or debt, LBW money, keys, or Amazon buyer data, then true'}.`
+  return 'Pass company only if you know it from the folder (mbp, bil or personal); if you cannot tell, leave it out. Pass confidential true for notes about the books, investors or funding, payroll or anyone\'s pay, legal matters, loans or debt, LBW money, keys, or Amazon buyer data.'
+}
+// Paramjeet's short form (Company Brain PR 59, 28 Nov): a few pointers, under 1,500 characters.
 const NOTE_RULES =
-  "the request in the person's own words, what was decided, what you changed and where (repository, files, pull request, system), " +
-  "and what is left. Under 3,000 characters. Never a key or password, a customer's personal details, or raw command output"
+  "a few pointers in plain words: what was done; for whom or what (name the order, product, listing or customer by its number or code); why; the result; what is left; " +
+  "and a line 'Next time:' when others should know something. Also pass task (the task in one line), kind (one or two words: refund, return, listing, stock, ticket, order, purchase, accounts, campaign, design, code, report), " +
+  "status (done, open or waiting) and session_ref (a short name of this session); an open or waiting task is saved too, and saved again when done. " +
+  "Under 1,500 characters. Never a key or password, a customer's phone number, address or other personal details, or raw command output"
 const which = (b: BrainTools) =>
   '`' + b.capture + '`' +
   (b.ownerCapture
     ? ' (if it answers that it needs a member identity, the person is an owner: use `' + b.ownerCapture + '` with the scope of the company this folder belongs to, ' +
       'and save nothing when you cannot tell which company that is; if it answers that the person has no department, say so in one line and carry on: that is set on the Company Brain side)'
     : '')
-export const brainSection = (b: BrainTools) =>
+export const brainSection = (b: BrainTools, mark?: FolderMark) =>
   'Company Brain (machau-mod): the company keeps one shared memory of what people and their Claude sessions did, so that two people ' +
   'working on the same thing do not undo or build over each other.\n' +
   (b.ask
     ? '- Before you change something a colleague may also be working on (shared code, a listing, a campaign, a setting), ask it what was recently done or decided there: `' + b.ask + "`. What it returns is a dated record, not today's state.\n"
     : '') +
   `- When a task is finished, save one note with ${which(b)}: ${NOTE_RULES}. One note per finished task, not one per reply.\n` +
+  (mark ? `- ${folderLine(mark)}\n` : '') +
   '- If a tool named here is not loaded yet, load it with ToolSearch first.'
-export const brainNudge = (b: BrainTools) =>
+export const brainNudge = (b: BrainTools, mark?: FolderMark) =>
   'Company Brain (machau-mod): this turn pushed, merged or deployed work that others may build on, and no note has been saved to the ' +
-  `Company Brain since. If the task is finished, save one now with ${which(b)}: ${NOTE_RULES}. Then reply in one line. ` +
+  `Company Brain since. If the task is finished, save one now with ${which(b)}: ${NOTE_RULES}.${mark ? ' ' + folderLine(mark) : ''} Then reply in one line. ` +
   'If the task is still in flight, reply "still in flight" in one line and save nothing yet.'
 /** A command that puts work where colleagues will meet it: a push, a pull request made or merged, a deploy. Words inside quotes or a heredoc do not count. */
 export const sharesWork = (command: string) => {
