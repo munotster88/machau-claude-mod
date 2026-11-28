@@ -905,8 +905,8 @@ export const tooShortWakeup = (tool: string, e: Record<string, unknown>) => {
 export const COMPANY_CONNECTORS: ReadonlyArray<{ name: string; address: string; what: string; bundled: boolean }> = [
   { name: 'bamboostan-app', address: 'https://app.bamboostan.com/api/mcp', what: 'staff app tools (your rights come from the staff access list)', bundled: true },
   { name: 'sutra', address: 'https://sutra.bamboostan.com/api/mcp', what: 'Sutra (your rights are your Sutra role; leaving = deactivation in Sutra)', bundled: true },
-  // Not in the bundle yet: removing a person from Machau Chat does not end their sign-in (90 days of refresh), so it fails the leaver test.
-  { name: 'machau-chat', address: 'https://chat.machau.in/api/mcp', what: 'Machau Chat', bundled: false },
+  // Every call re-reads the person's company membership (personContext), and removal deletes their personal keys: a removed person is refused.
+  { name: 'machau-chat', address: 'https://chat.machau.in/api/mcp', what: 'Machau Chat (acts as you; ends when you are removed from the company)', bundled: true },
 ]
 /** Which company connectors a session has: names from the fixed list only, never anything else the person has connected. */
 export const connectorsSeen = (tools: readonly string[]): string[] => {

@@ -16,8 +16,9 @@ The team plugin carries the addresses of the company connectors. It never carrie
 - **bamboostan-app** (staff app tools): `https://app.bamboostan.com/api/mcp`. Sign in with your company Google account. What you can do is set by your rights in the staff access list.
 
 - **sutra** (Sutra): `https://sutra.bamboostan.com/api/mcp`. Sign in as yourself (Sutra password and code, or Google). What you can do is your Sutra role; it stops when you are deactivated in Sutra.
+- **machau-chat** (Machau Chat): `https://chat.machau.in/api/mcp`. Sign in as yourself; you act as yourself and it stops when you are removed from the company.
 
-Not in the bundle yet (HQ is making sign-in safe for leavers first): Machau Chat, Engage and Company Brain. Keep the connector you already have for those; do not add keys to anything else.
+Not in the bundle yet (HQ is making sign-in safe for leavers first): Engage and Company Brain. Keep the connector you already have for those; do not add keys to anything else.
 
 ## On claude.ai (web and phone)
 Connectors added through the plugin work in Claude Code only. For claude.ai, each person adds them by hand once: Settings, Connectors, Add custom connector, paste the address above, sign in. Nobody can add them for you on an individual plan.
