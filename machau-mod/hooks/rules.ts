@@ -2,6 +2,11 @@
 // Kept short on purpose; it is added to each session's instructions. No names, addresses or keys belong in this file:
 // the founder's address comes from each person's own profile (founderEmail), read by register.ts.
 export const RULES_LINES = [
+  'Answer first, in short plain words, with one recommendation, not a menu.',
+  'If an instruction looks wrong or misses something the person may not know, say so first in one or two lines and what you would do instead.',
+  'Do every step you can yourself; bring the person only sign-ins, approvals and business calls.',
+  'Never say something is done or live unless you checked it; say what you checked and what you did not.',
+  'When you would say "your call" or "waiting for you", make it a task for that person (skill put-offs) instead of leaving it in the chat.',
   'Read the last 3 days of a chat before you write in it.',
   'Check the live status yourself (order, stock, listing, ad, deploy) before you chase a person for it.',
   'Close a task only with proof, and tell the person who asked.',
