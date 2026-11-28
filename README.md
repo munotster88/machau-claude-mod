@@ -18,6 +18,10 @@ It does nothing in ordinary chat.
 | Task inbox | Tasks HQ gives you in Machau Chat (your own `machau-chat` connector) are looked for when a session starts, when you say "take my tasks", and at the end of a turn every 30 minutes. Claude plans each, does what it can with your connectors, asks you only for your judgement, replies in the task's thread with proof, and closes it only with proof. An idle session is not woken: the check waits for the next turn | on |
 | Role kit check | Pick your role once by typing "my role is <role>" (tech, website, marketing, marketplaces, customer care, accounts, operations). Each day, the connectors of your role are checked once; a failing or missing one shows one line and Tech & Access gets one Machau Chat message about it (at most once a day per connector) | on |
 | Company rules | A short set of company rules (`machau-mod/hooks/rules.ts`) is added to every session: read the last 3 days of a chat, close a task only with proof, no secrets in chat, payment emails copy the founder | on |
+| Read before writing | A message to a Machau Chat chat you have not read in this session is held once, with a pointer to read the last days first | on |
+| No short polling | A timed wake-up under 20 minutes (polling, a turn per look) is refused; wait with Machau Chat's reply watch instead | on |
+| Reply rules | Five more company rules: answer first and plain, flag a wrong instruction, do what you can yourself, never say done without checking, put-offs become tasks | on |
+| Skills: needs-you, put-offs, my-hq | "What needs me" builds your own live list as a page you tick; "your call" things become tasks; a light personal HQ for your day (one session; a back office only if you ask) | on, nothing runs unless you ask |
 
 The founder's address for payment emails and the Tech & Access chat are read from your profile, not from this repo: `"founderEmail": "..."` and `"desks": { "techAccess": "<chat id>" }` (without `desks`, the messages go to the founder's own chat).
 

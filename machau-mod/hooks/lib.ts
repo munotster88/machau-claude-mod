@@ -275,7 +275,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.5.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.6.0' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -868,3 +868,32 @@ export const recordBody = (a: { id: string; member: string; written: Exclude<Wri
     minutes: Math.round((a.now - a.stats.startedAt) / 60_000), corrections: a.stats.corrections, kind: 'other',
     task: a.written.task, done: a.written.done, left: a.written.left, topic: a.written.topic,
   })
+
+
+// ---------- team kit v1 (1.6.0): read the thread before writing, no short polling ----------
+const arg = (e: Record<string, unknown>, k: string) => {
+  const v = e[k] ?? (e.input as Record<string, unknown> | undefined)?.[k]
+  return typeof v === 'string' || typeof v === 'number' ? String(v) : undefined
+}
+/** The chat a Machau Chat read or send call is about, if it names one. */
+export const chatIdOfCall = (e: Record<string, unknown>) => arg(e, 'chat_id')
+/** Calls that read a chat's messages (the reader's own connector: Sid's `machau-chat-sid` kind included). */
+export const isChatRead = (tool: string) => {
+  const p = splitMcp(tool)
+  return p !== undefined && /^machau-chat/.test(p[0]) && (p[1] === 'get_messages' || p[1] === 'get_new_messages')
+}
+export const isChatSend = (tool: string) => {
+  const p = splitMcp(tool)
+  return p !== undefined && /^machau-chat/.test(p[0]) && p[1] === 'send_message'
+}
+export const READ_FIRST =
+  'machau-mod: read this chat before you write in it. Call get_messages for this chat (the last 3 days at least), check what was already asked or answered, then send. This is said once per chat in a session.'
+/** A timed wake-up under 20 minutes is polling: it costs a turn per look. */
+export const MIN_WAKEUP_SECONDS = 20 * 60
+export const POLL_REFUSED =
+  'machau-mod: a wake-up under 20 minutes is polling, and every look costs a turn from your plan. To wait for a reply, send the message with a reply watch (Machau Chat\'s own: it wakes you when the answer comes). To wait for something else, ask the person to check later, or schedule one wake-up of 20 minutes or more.'
+export const tooShortWakeup = (tool: string, e: Record<string, unknown>) => {
+  if (tool !== 'ScheduleWakeup') return false
+  const n = Number(arg(e, 'delaySeconds') ?? arg(e, 'delay_seconds') ?? arg(e, 'seconds'))
+  return Number.isFinite(n) && n > 0 && n < MIN_WAKEUP_SECONDS
+}

@@ -240,3 +240,18 @@ test('a kit-check message to the desk is remembered, so the desk hears about a c
   const told = (await m.logged('roleKitCheck', lines => lines.some(l => l.detail.told))).find(l => l.detail.told)
   assert.equal(told?.detail.told, 'engage')
 })
+
+test('team kit: a first message to a chat that was not read is held once; reading first, or a second try, lets it through', async () => {
+  const m = await load()
+  const first = await m.call('tool.call', { tool: 'mcp__machau-chat__send_message', chat_id: 'chat-1', text: 'hello' }, {})
+  assert.match(String(first.deny), /read this chat/)
+  assert.equal((await m.call('tool.call', { tool: 'mcp__machau-chat__send_message', chat_id: 'chat-1', text: 'hello' }, {})).deny, undefined) // said once
+  await m.call('tool.call', { tool: 'mcp__machau-chat-sid__get_messages', chat_id: 'chat-2' }, {})
+  assert.equal((await m.call('tool.call', { tool: 'mcp__machau-chat-sid__send_message', chat_id: 'chat-2', text: 'hi' }, {})).deny, undefined) // read first
+})
+
+test('team kit: a wake-up under 20 minutes is refused, 20 minutes or more is allowed', async () => {
+  const m = await load()
+  assert.match(String((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 300, prompt: 'check' }, {})).deny), /polling/)
+  assert.equal((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 1500, prompt: 'check' }, {})).deny, undefined)
+})

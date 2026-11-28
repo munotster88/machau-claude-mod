@@ -5,6 +5,7 @@ import {
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
+  READ_FIRST, POLL_REFUSED, chatIdOfCall, isChatRead, isChatSend, tooShortWakeup,
   COLLECTOR_URL, RECORD_URL, ENROL_URL, enrolCodeIn, readCollector, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, newStats, parseRecordReply, recordDue, RECORD_ASK, type RecordStats,
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
 } from './lib.ts'
@@ -31,6 +32,8 @@ const DEFAULTS = {
   taskInbox: true, // Machau Chat tasks HQ gave this person: picked up at session start, and checked again after 30 idle minutes
   roleKitCheck: true, // the connectors of the person's role are checked once a day; a failing one is reported to Tech & Access
   companyRules: true, // the short company rules (hooks/rules.ts) are added to every session
+  readThread: true, // a message to a chat you have not read in this session is held once, with a pointer to read it first
+  pollGuard: true, // a timed wake-up under 20 minutes (polling) is refused; wait with a reply watch instead
   workRecord: true, // one short record per session (counts and a scrubbed note) to the team collector; no transcript
   heartbeat: true, // once a day: who has the plugin, its version, Mac or Windows, last use. No content (see COLLECTOR_URL)
 }
@@ -134,6 +137,7 @@ async function postCollector($: Run, url: string, token: string | undefined, bod
   return String(await within($.process.run(powershell(`$env:TOKEN='${token ?? ''}'; Invoke-RestMethod -Method Post -Uri '${url}' ${hdr}-ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(text), 12000, ''))
 }
 
+const chatsRead = new Set<string>() // chats whose messages this session has read
 const recStats = new Map<string, RecordStats>()
 let lastSession = ''
 const RECORDS_LOG = '.local/state/machau-mod/records.jsonl'
@@ -288,6 +292,15 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const tool = String(e.tool)
     if ((await sw($)).workRecord) { lastSession = (await $.session.id().catch(() => '')) || lastSession || `p${Date.now().toString(36)}`; if (lastSession) statsFor(lastSession).toolCalls++ }
+    if (tooShortWakeup(tool, e as Record<string, unknown>) && (await sw($)).pollGuard) {
+      void record($, 'pollGuard', { refused: true })
+      return { deny: POLL_REFUSED }
+    }
+    if (isChatRead(tool)) { const c = chatIdOfCall(e as Record<string, unknown>); if (c) chatsRead.add(c) }
+    else if (isChatSend(tool) && (await sw($)).readThread) {
+      const c = chatIdOfCall(e as Record<string, unknown>)
+      if (c && !chatsRead.has(c)) { chatsRead.add(c); void record($, 'readThread', { held: true }); return { deny: READ_FIRST } }
+    }
     if ((await sw($)).noClaudeInChrome && isClaudeInChrome(tool)) {
       void record($, 'noClaudeInChrome', tool)
       return { deny: chromeDeny((await os($)) === 'mac') }

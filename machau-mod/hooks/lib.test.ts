@@ -447,13 +447,13 @@ test('the founder address and the desk come from the profile, never from the cod
 })
 
 test('the company rules are short, and name the founder address only when one is set', () => {
-  assert.ok(RULES_LINES.length >= 7 && RULES_LINES.length <= 10)
+  assert.ok(RULES_LINES.length >= 7 && RULES_LINES.length <= 14)
   const set = rulesSection('f@example.com')
   assert.ok(set.includes('f@example.com'))
   assert.ok(!set.includes('{FOUNDER}'))
   assert.ok(rulesSection(undefined).includes('ask before you send one'))
   assert.ok(set.includes('Read the last 3 days of a chat'))
-  assert.ok(set.length < 1200, 'short enough for every session')
+  assert.ok(set.length < 2200, 'short enough for every session')
 })
 
 // ---------- heartbeat (1.4.0) ----------
