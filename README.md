@@ -23,6 +23,7 @@ It does nothing in ordinary chat.
 | Reply rules | Five more company rules: answer first and plain, flag a wrong instruction, do what you can yourself, never say done without checking, put-offs become tasks | on |
 | Skills: needs-you, put-offs, my-hq | "What needs me" builds your own live list as a page you tick; "your call" things become tasks; a light personal HQ for your day (one session; a back office only if you ask) | on, nothing runs unless you ask |
 | Company connectors | The plugin carries the addresses of the staff app, Sutra and Machau Chat connectors (no key; you sign in with your company Google account and your rights are the ones the company gave you). `machau connectors` tells you which company connectors work on this computer | on; sign-in is yours to do (`/mcp`) |
+| Report a problem | Describe a work problem to your Claude: it tries to solve it with your connectors first. If it cannot, it drafts a six-part report (what you were doing, what happened, one real example, how often and cost, what was tried, what would fix it), shows you, and on your yes sends it to Sid in Machau Chat starting with `[problem]`. A report holding a phone number, email or key is held back | on, nothing runs unless you describe a problem |
 
 The founder's address for payment emails and the Tech & Access chat are read from your profile, not from this repo: `"founderEmail": "..."` and `"desks": { "techAccess": "<chat id>" }` (without `desks`, the messages go to the founder's own chat).
 

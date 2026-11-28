@@ -558,3 +558,34 @@ test('the body has the written lines and counts, and no raw prompt or summary fi
   assert.equal(b.minutes, 2)
 })
 test('topics drop filler words and keep six at most', () => assert.equal(topicOf('Fix the Sutra courier booking page for Delhivery and Bluedart extra words here'), 'sutra courier booking delhivery bluedart extra'))
+
+// ---------- 1.8.0: report a problem ----------
+import { isProblemReport as isProb, problemReportIssue as probIssue } from './lib.ts'
+test('a [problem] report may hold order numbers and codes, never contact details or secrets', () => {
+  assert.ok(isProb('[problem] Courier label wrong'))
+  assert.ok(!isProb('hello [problem]'))
+  const ok = '[problem] Wrong label\nTrying to do: print a label\nExample: order BS1042 and Amazon order 171-1234567-1234567\nCost: 3 orders a day'
+  assert.equal(probIssue(ok), undefined)
+  for (const bad of ['call the buyer on 98765 43210', 'mail ravi@example.com', 'key sk-abcdefghijklmnop1234567890', 'password is hunter2xyz']) assert.match(String(probIssue('[problem] x ' + bad)), /Remove it/)
+})
+
+// ---------- Company Brain short form and folder mark (Paramjeet, 28 Nov) ----------
+import { folderMark as fMark, folderLine as fLine } from './lib.ts'
+test('the folder tells which company a note belongs to, and whether it is private', () => {
+  assert.deepEqual(fMark('/Users/sid/MBP'), { company: 'mbp', confidential: false })
+  assert.deepEqual(fMark('/Users/sid/MBP/projects/tech-desk'), { company: 'mbp', confidential: false })
+  assert.deepEqual(fMark('/Users/sid/MBP/private/projects/books'), { company: 'mbp', confidential: true })
+  assert.deepEqual(fMark('C:\\Users\\Ravi\\MBP\\private'), { company: 'mbp', confidential: true })
+  assert.deepEqual(fMark('/Users/sid/BIL/x'), { company: 'bil', confidential: false })
+  assert.deepEqual(fMark('/Users/sid/Personal'), { company: 'personal', confidential: false })
+  assert.deepEqual(fMark('/Users/ravi/Documents/work'), { confidential: false })
+  assert.match(fLine(fMark('/Users/sid/BIL')), /never goes to this Company Brain/)
+  assert.match(fLine(fMark('/Users/sid/Personal')), /Save no note/)
+  assert.match(fLine(fMark('/Users/sid/MBP/private')), /company "mbp" and confidential true/)
+})
+test('the note form is the short one with task, kind, status and a company line', () => {
+  const b = { capture: 'mcp__x__brain_department_capture' }
+  const t = brainSection(b, fMark('/Users/sid/MBP'))
+  for (const w of ['Next time:', 'task (the task in one line)', 'kind', 'status (done, open or waiting)', '1,500 characters', 'pass company "mbp"']) assert.ok(t.includes(w), w)
+  assert.ok(!t.includes('3,000'))
+})
