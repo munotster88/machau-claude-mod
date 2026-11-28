@@ -31,6 +31,7 @@ test('the checklist addresses are exactly the addresses in the bundle', () => {
 test('a connector the plugin carries is the same connector as one added by hand', () => {
   assert.deepEqual(splitMcp('mcp__plugin_machau-mod_machau-chat__list_tasks'), ['machau-chat', 'list_tasks'])
   assert.deepEqual(splitMcp('mcp__machau-chat__list_tasks'), ['machau-chat', 'list_tasks'])
+  assert.deepEqual(splitMcp('mcp__machau-chats__list_tasks'), ['machau-chat', 'list_tasks']) // the name in Paramjeet's app
 })
 
 test('only company connector names leave the laptop, and only the fixed names', () => {
@@ -39,4 +40,10 @@ test('only company connector names leave the laptop, and only the fixed names', 
   const b = JSON.parse(heartbeatBody({ member: 'sid', version: '1.7.0', os: 'mac', pieces: [], lastActive: 'x', connectors: seen }))
   assert.deepEqual(b.connectors.sort(), ['bamboostan-app', 'machau-chat'])
   assert.ok(!JSON.stringify(b).includes('my-private-thing'))
+})
+
+test('the needs-you skill carries the page exactly, so no first run has to look for a file', () => {
+  const skill = readFileSync(fileURLToPath(new URL('../skills/needs-you/SKILL.md', import.meta.url)), 'utf8')
+  const page = readFileSync(fileURLToPath(new URL('../skills/needs-you/page.html', import.meta.url)), 'utf8').trim()
+  assert.ok(skill.includes(page), 'SKILL.md must contain page.html unchanged')
 })

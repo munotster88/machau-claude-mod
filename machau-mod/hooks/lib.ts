@@ -110,8 +110,8 @@ export function splitMcp(name: string): [string, string] | undefined {
   if (!name.startsWith('mcp__')) return undefined
   const rest = name.slice(5)
   const i = rest.indexOf('__')
-  // A connector this plugin carries shows up as plugin_machau-mod_<name>; it is the same connector as one added by hand.
-  return i > 0 ? [rest.slice(0, i).replace(/^plugin_machau-mod_/, ''), rest.slice(i + 2)] : undefined
+  // A connector this plugin carries shows up as plugin_machau-mod_<name>; it is the same connector as one added by hand. Some apps name the Machau Chat connector machau-chats (Paramjeet's, 28 Nov): the same connector.
+  return i > 0 ? [rest.slice(0, i).replace(/^plugin_machau-mod_/, '').replace(/^machau-chats$/, 'machau-chat'), rest.slice(i + 2)] : undefined
 }
 
 /** The same server under its two spellings: "claude.ai Meta MCP" (a heading) and "claude_ai_Meta_MCP" (a tool name). */
@@ -889,14 +889,19 @@ export const isChatSend = (tool: string) => {
 }
 export const READ_FIRST =
   'machau-mod: read this chat before you write in it. Call get_messages for this chat (the last 3 days at least), check what was already asked or answered, then send. This is said once per chat in a session.'
-/** A timed wake-up under 20 minutes is polling: it costs a turn per look. */
+/** A timed wake-up is polling when it is under 5 minutes, or under 20 minutes and about a chat, message, reply, inbox or task.
+ *  Waiting on a build or a deploy is not polling a person (Paramjeet, 28 Nov). */
 export const MIN_WAKEUP_SECONDS = 20 * 60
+export const MIN_ANY_WAKEUP_SECONDS = 5 * 60
 export const POLL_REFUSED =
-  'machau-mod: a wake-up under 20 minutes is polling, and every look costs a turn from your plan. To wait for a reply, send the message with a reply watch (Machau Chat\'s own: it wakes you when the answer comes). To wait for something else, ask the person to check later, or schedule one wake-up of 20 minutes or more.'
+  'machau-mod: a wake-up this short is polling, and every look costs a turn from your plan. To wait for a reply, send the message with a reply watch (Machau Chat\'s own: it wakes you when the answer comes). To wait for a build or a deploy, schedule one wake-up of 5 minutes or more. To wait on a person, 20 minutes or more.'
 export const tooShortWakeup = (tool: string, e: Record<string, unknown>) => {
   if (tool !== 'ScheduleWakeup') return false
   const n = Number(arg(e, 'delaySeconds') ?? arg(e, 'delay_seconds') ?? arg(e, 'seconds'))
-  return Number.isFinite(n) && n > 0 && n < MIN_WAKEUP_SECONDS
+  if (!Number.isFinite(n) || n <= 0) return false
+  if (n < MIN_ANY_WAKEUP_SECONDS) return true
+  const about = `${arg(e, 'prompt') ?? ''} ${arg(e, 'reason') ?? ''}`
+  return n < MIN_WAKEUP_SECONDS && /\b(chat|message|reply|replies|inbox|task|email|mail|answer|respond)/i.test(about)
 }
 
 
