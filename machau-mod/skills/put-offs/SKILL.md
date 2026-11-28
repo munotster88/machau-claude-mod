@@ -1,6 +1,6 @@
 ---
 name: put-offs
-description: When you are about to tell the person "your call", "needs your approval", "waiting on you" or to leave something for later, make it a task for them instead. Use whenever something is put off to the person.
+description: 'When you are about to tell the person your call, needs your approval, waiting on you or to leave something for later, make it a task for them instead. Use whenever something is put off to the person.'
 ---
 # Put-offs become tasks
 

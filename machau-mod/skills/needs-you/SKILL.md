@@ -1,6 +1,6 @@
 ---
 name: needs-you
-description: Shows the person's own live "needs you" list: what waits on them, as a page they tick. Use when they ask "what needs me", "my list", "what is waiting on me", or at the start of their day.
+description: 'Shows the person''s own live needs you list - what waits on them, as a page they tick. Use when they ask what needs me, my list, what is waiting on me, or at the start of their day.'
 ---
 # Needs you: the person's own live list
 

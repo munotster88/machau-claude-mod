@@ -1,6 +1,6 @@
 ---
 name: my-hq
-description: Runs a light personal HQ: one main session that keeps the person's day, their needs-you list and their put-offs. Use when they say "my day", "morning", "evening", "what is on", or ask to start a back office.
+description: 'Runs a light personal HQ - one main session that keeps the person''s day, their needs-you list and their put-offs. Use when they say my day, morning, evening, what is on, or ask to start a back office.'
 ---
 # My HQ (light)
 
