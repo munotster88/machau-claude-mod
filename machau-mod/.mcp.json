@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "bamboostan-app": {
+      "type": "http",
+      "url": "https://app.bamboostan.com/api/mcp"
+    },
+    "sutra": {
+      "type": "http",
+      "url": "https://sutra.bamboostan.com/api/mcp"
+    },
+    "machau-chat": {
+      "type": "http",
+      "url": "https://chat.machau.in/api/mcp"
+    }
+  }
+}

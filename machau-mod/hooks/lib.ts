@@ -110,7 +110,8 @@ export function splitMcp(name: string): [string, string] | undefined {
   if (!name.startsWith('mcp__')) return undefined
   const rest = name.slice(5)
   const i = rest.indexOf('__')
-  return i > 0 ? [rest.slice(0, i), rest.slice(i + 2)] : undefined
+  // A connector this plugin carries shows up as plugin_machau-mod_<name>; it is the same connector as one added by hand. Some apps name the Machau Chat connector machau-chats (Paramjeet's, 28 Nov): the same connector.
+  return i > 0 ? [rest.slice(0, i).replace(/^plugin_machau-mod_/, '').replace(/^machau-chats$/, 'machau-chat'), rest.slice(i + 2)] : undefined
 }
 
 /** The same server under its two spellings: "claude.ai Meta MCP" (a heading) and "claude_ai_Meta_MCP" (a tool name). */
@@ -275,7 +276,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.6.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.7.0' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -785,8 +786,8 @@ export const istDayOf = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOS
 export const heartbeatDue = (lastDay: string | undefined, today: string, member: string | undefined) =>
   !!member && /^[a-z0-9][a-z0-9-]{1,40}$/.test(member) && lastDay !== today
 /** The only fields sent. No conversation, no file names, no folders, no prompts. */
-export const heartbeatBody = (a: { member: string; version: string; os: string; pieces: readonly string[]; lastActive: string }) =>
-  JSON.stringify({ member: a.member, plugin_version: a.version, os: a.os, pieces: a.pieces.slice(0, 40), last_active: a.lastActive })
+export const heartbeatBody = (a: { member: string; version: string; os: string; pieces: readonly string[]; lastActive: string; connectors?: readonly string[] }) =>
+  JSON.stringify({ member: a.member, plugin_version: a.version, os: a.os, pieces: a.pieces.slice(0, 40), last_active: a.lastActive, ...(a.connectors ? { connectors: a.connectors.slice(0, 10) } : {}) })
 
 
 // ---------- work record (1.4.1): one short record per session, counts plus a scrubbed note. No transcript. ----------
@@ -888,12 +889,37 @@ export const isChatSend = (tool: string) => {
 }
 export const READ_FIRST =
   'machau-mod: read this chat before you write in it. Call get_messages for this chat (the last 3 days at least), check what was already asked or answered, then send. This is said once per chat in a session.'
-/** A timed wake-up under 20 minutes is polling: it costs a turn per look. */
+/** A timed wake-up is polling when it is under 5 minutes, or under 20 minutes and about a chat, message, reply, inbox or task.
+ *  Waiting on a build or a deploy is not polling a person (Paramjeet, 28 Nov). */
 export const MIN_WAKEUP_SECONDS = 20 * 60
+export const MIN_ANY_WAKEUP_SECONDS = 5 * 60
 export const POLL_REFUSED =
-  'machau-mod: a wake-up under 20 minutes is polling, and every look costs a turn from your plan. To wait for a reply, send the message with a reply watch (Machau Chat\'s own: it wakes you when the answer comes). To wait for something else, ask the person to check later, or schedule one wake-up of 20 minutes or more.'
+  'machau-mod: a wake-up this short is polling, and every look costs a turn from your plan. To wait for a reply, send the message with a reply watch (Machau Chat\'s own: it wakes you when the answer comes). To wait for a build or a deploy, schedule one wake-up of 5 minutes or more. To wait on a person, 20 minutes or more.'
 export const tooShortWakeup = (tool: string, e: Record<string, unknown>) => {
   if (tool !== 'ScheduleWakeup') return false
   const n = Number(arg(e, 'delaySeconds') ?? arg(e, 'delay_seconds') ?? arg(e, 'seconds'))
-  return Number.isFinite(n) && n > 0 && n < MIN_WAKEUP_SECONDS
+  if (!Number.isFinite(n) || n <= 0) return false
+  if (n < MIN_ANY_WAKEUP_SECONDS) return true
+  const about = `${arg(e, 'prompt') ?? ''} ${arg(e, 'reason') ?? ''}`
+  return n < MIN_WAKEUP_SECONDS && /\b(chat|message|reply|replies|inbox|task|email|mail|answer|respond)/i.test(about)
 }
+
+
+// ---------- company connectors (1.7.0): the addresses are in .mcp.json; people sign in as themselves ----------
+/** The company connectors a person is expected to have, by the name Claude sees. Addresses only: no key, token or id. */
+export const COMPANY_CONNECTORS: ReadonlyArray<{ name: string; address: string; what: string; bundled: boolean }> = [
+  { name: 'bamboostan-app', address: 'https://app.bamboostan.com/api/mcp', what: 'staff app tools (your rights come from the staff access list)', bundled: true },
+  { name: 'sutra', address: 'https://sutra.bamboostan.com/api/mcp', what: 'Sutra (your rights are your Sutra role; leaving = deactivation in Sutra)', bundled: true },
+  // Every call re-reads the person's company membership (personContext), and removal deletes their personal keys: a removed person is refused.
+  { name: 'machau-chat', address: 'https://chat.machau.in/api/mcp', what: 'Machau Chat (acts as you; ends when you are removed from the company)', bundled: true },
+]
+/** Which company connectors a session has: names from the fixed list only, never anything else the person has connected. */
+export const connectorsSeen = (tools: readonly string[]): string[] => {
+  const have = new Set(tools.map(t => splitMcp(t)?.[0]).filter((s): s is string => s !== undefined))
+  return COMPANY_CONNECTORS.map(c => c.name).filter(n => [...have].some(h => h === n || h.startsWith(n)))
+}
+export const asksConnectors = (text: string) => /^\s*machau connectors\s*$/i.test(text)
+export const CONNECTORS_ASK =
+  'The person typed "machau connectors". Use the connectors skill: run `claude mcp list` in the shell, then say in one line each whether the company connectors (' +
+  COMPANY_CONNECTORS.map(c => c.name).join(', ') +
+  ') are connected, need a sign-in (tell them to run /mcp and sign in with their company Google account), or are missing (give the address from the skill and where to add it). Do not print any token.'

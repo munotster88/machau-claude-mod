@@ -250,8 +250,10 @@ test('team kit: a first message to a chat that was not read is held once; readin
   assert.equal((await m.call('tool.call', { tool: 'mcp__machau-chat-sid__send_message', chat_id: 'chat-2', text: 'hi' }, {})).deny, undefined) // read first
 })
 
-test('team kit: a wake-up under 20 minutes is refused, 20 minutes or more is allowed', async () => {
+test('team kit: a wake-up under 5 minutes, or under 20 about a chat, is refused; waits on a build or deploy and 20 minutes or more are allowed', async () => {
   const m = await load()
-  assert.match(String((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 300, prompt: 'check' }, {})).deny), /polling/)
-  assert.equal((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 1500, prompt: 'check' }, {})).deny, undefined)
+  assert.match(String((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 120, prompt: 'check the build' }, {})).deny), /polling/)
+  assert.match(String((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 600, prompt: 'check if Sid has replied in the chat' }, {})).deny), /polling/)
+  assert.equal((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 600, prompt: 'check the deploy finished' }, {})).deny, undefined) // a build or deploy is not a person
+  assert.equal((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 1500, prompt: 'check the chat' }, {})).deny, undefined)
 })

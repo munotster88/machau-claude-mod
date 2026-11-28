@@ -5,6 +5,7 @@ import {
   maskSecrets, osDefaults, parseMacReading, parseWindowsReading, plainPrompt, planTick, playwrightDeny, routeFor, routeId, serversIn, shouldDefer,
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
+  CONNECTORS_ASK, asksConnectors, connectorsSeen,
   READ_FIRST, POLL_REFUSED, chatIdOfCall, isChatRead, isChatSend, tooShortWakeup,
   COLLECTOR_URL, RECORD_URL, ENROL_URL, enrolCodeIn, readCollector, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, newStats, parseRecordReply, recordDue, RECORD_ASK, type RecordStats,
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
@@ -137,6 +138,7 @@ async function postCollector($: Run, url: string, token: string | undefined, bod
   return String(await within($.process.run(powershell(`$env:TOKEN='${token ?? ''}'; Invoke-RestMethod -Method Post -Uri '${url}' ${hdr}-ContentType 'application/json' -Body '${body.replace(/'/g, "''")}' | ConvertTo-Json -Compress`)).then(text), 12000, ''))
 }
 
+let seenConnectors: string[] = [] // company connector names this session has, from the session's tool list
 const chatsRead = new Set<string>() // chats whose messages this session has read
 const recStats = new Map<string, RecordStats>()
 let lastSession = ''
@@ -167,7 +169,7 @@ async function heartbeat($: Run, set: Switches) {
   const last = (await readHome($, o, HEART)).trim().split('\n').pop()?.trim() || undefined
   const auth = await collectorAuth($)
   if (!auth || !heartbeatDue(last, today, auth.member)) return
-  const body = heartbeatBody({ member: auth.member, version: VERSION, os: o, pieces: Object.keys(set).filter(k => (set as Record<string, unknown>)[k] === true), lastActive: new Date().toISOString() })
+  const body = heartbeatBody({ member: auth.member, version: VERSION, os: o, pieces: Object.keys(set).filter(k => (set as Record<string, unknown>)[k] === true), lastActive: new Date().toISOString(), connectors: seenConnectors })
   const sent = await postCollector($, COLLECTOR_URL, auth.token, body)
   if (/"ok":\s*true/.test(sent)) await appendHome($, o, HEART, today)
   void record($, 'heartbeat', { sent: /"ok":\s*true/.test(sent), os: o })
@@ -239,6 +241,7 @@ export const register: Register = on => {
       const lines = (await readHome($, o, RECORDS_LOG)).trim().split('\n').filter(Boolean).slice(-5)
       return next({ ...e, text: lines.length ? `The person asked what the machau-mod plugin sent in their name. Show these records, newest last, each as task / done / left / area / status, and say they are all that was sent besides the daily heartbeat (name, version, computer, last use):\n${lines.join('\n')}` : 'The person asked what the machau-mod plugin sent in their name. Nothing has been sent from this computer yet.' } as typeof e)
     }
+    if (asksConnectors(String(meta.text ?? ''))) return next({ ...e, text: CONNECTORS_ASK } as typeof e)
     const said = plainPrompt(String(meta.text ?? ''))
     if (lastSession === '') lastSession = (await $.session.id().catch(() => '')) || `p${Date.now().toString(36)}`
     wrappedThisTurn = false
@@ -540,6 +543,7 @@ export const register: Register = on => {
     }
     // Company rules, the task inbox, and the role kit (the kit once per session, and once a day per connector).
     if (set.companyRules) sections = [...sections, { id: 'machau-mod:company-rules', text: rulesSection(founderEmailOf(await profile($))), scope: 'session' as const }]
+    seenConnectors = connectorsSeen(e.tools)
     inboxHere = set.taskInbox && e.tools.some(t => isMachauChatTool(t, 'list_tasks'))
     if (inboxHere) {
       if (lastInbox === 0) lastInbox = Date.now()
