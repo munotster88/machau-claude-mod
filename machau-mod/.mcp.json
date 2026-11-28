@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "bamboostan-app": {
+      "type": "http",
+      "url": "https://app.bamboostan.com/api/mcp"
+    }
+  }
+}

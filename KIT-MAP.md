@@ -46,6 +46,8 @@ When a working-method fix is made in Sid's set-up: add the piece to sid-mod's RE
 | team inbox | in-team | task inbox | Same idea, inside the plugin | 2026-11-28 |
 | strip | v2 |  | Mac app hook; the needs-you page replaces it in v1 | 2026-11-28 |
 | scoreboard | in-team | events.jsonl log | Same local log | 2026-11-28 |
+| keysclip | sid-only | | Sid's key store and clipboard helper (Mac) | 2026-11-28 |
+| hq back office | v1 | skill my-hq (back office off by default) | Hook-driven traffic takeover is Sid's; the team version is a plain second session the person starts | 2026-11-28 |
 
 ## Team-only pieces (not in Sid's mod, so never "stale")
 
@@ -54,3 +56,4 @@ When a working-method fix is made in Sid's set-up: add the piece to sid-mod's RE
 | read before writing | v1 | readThread (1.6.0) | Shakti #3; new in team kit v1 | 2026-11-28 |
 | needs-you list | v1 | skill needs-you (1.6.0) | Live list from the person's own tasks | 2026-11-28 |
 | my hq (light) | v1 | skill my-hq (1.6.0) | One main session; back office off by default | 2026-11-28 |
+| company connectors | v1 | .mcp.json (staff app) + skill connectors + `machau connectors` (1.7.0) | Machau Chat, Engage, Brain, Sutra wait: they fail the leaver test or are unconfirmed | 2026-11-28 |
