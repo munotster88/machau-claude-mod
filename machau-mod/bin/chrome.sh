@@ -86,7 +86,13 @@ OSA
 
 # The tab this session works in: its own background tab if it opened one that still exists, else your front tab.
 cur() { local id; id=$(cat "$CUR" 2>/dev/null); [ -n "$id" ] && [ "$(tab exists "$id")" = yes ] && echo "$id" || echo front; }
-js() { tab js "$(cur)" "$1"; }
+# A page that streams its content in (React) shows the first late part on the browser's next painted frame, and a
+# background tab never paints: the page then sits on "Loading..." although the content has arrived. So before every
+# read, script or click in a hidden tab that holds such an arrived, unshown part, the page's own reveal step is run
+# for it. Nothing is done on a page you can see, or on any other kind of page.
+SETTLE_MAIN='(function(){if(!(window.$RB&&$RB.length&&window.$RV))return;var r=window.requestAnimationFrame;window.requestAnimationFrame=function(f){return setTimeout(f,0)};try{$RV($RB)}finally{window.requestAnimationFrame=r}})()'
+SETTLE='void function(){try{if(document.hidden&&document.querySelector("[hidden][id^=\"S:\"]")){var s=document.createElement("script");s.textContent="'"$SETTLE_MAIN"'";(document.head||document.documentElement).appendChild(s);s.remove()}}catch(e){}}();'
+js() { tab js "$(cur)" "$SETTLE$1"; }
 
 case "$1" in
   open)
