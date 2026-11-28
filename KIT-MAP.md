@@ -56,4 +56,4 @@ When a working-method fix is made in Sid's set-up: add the piece to sid-mod's RE
 | read before writing | v1 | readThread (1.6.0) | Shakti #3; new in team kit v1 | 2026-11-28 |
 | needs-you list | v1 | skill needs-you (1.6.0) | Live list from the person's own tasks | 2026-11-28 |
 | my hq (light) | v1 | skill my-hq (1.6.0) | One main session; back office off by default | 2026-11-28 |
-| company connectors | v1 | .mcp.json (staff app) + skill connectors + `machau connectors` (1.7.0) | Machau Chat, Engage, Brain, Sutra wait: they fail the leaver test or are unconfirmed | 2026-11-28 |
+| company connectors | v1 | .mcp.json (staff app) + skill connectors + `machau connectors` (1.7.0) | staff app and Sutra carried; Machau Chat, Engage and Brain wait: they fail the leaver test | 2026-11-28 |

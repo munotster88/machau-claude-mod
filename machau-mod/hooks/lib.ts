@@ -904,6 +904,7 @@ export const tooShortWakeup = (tool: string, e: Record<string, unknown>) => {
 /** The company connectors a person is expected to have, by the name Claude sees. Addresses only: no key, token or id. */
 export const COMPANY_CONNECTORS: ReadonlyArray<{ name: string; address: string; what: string; bundled: boolean }> = [
   { name: 'bamboostan-app', address: 'https://app.bamboostan.com/api/mcp', what: 'staff app tools (your rights come from the staff access list)', bundled: true },
+  { name: 'sutra', address: 'https://sutra.bamboostan.com/api/mcp', what: 'Sutra (your rights are your Sutra role; leaving = deactivation in Sutra)', bundled: true },
   // Not in the bundle yet: removing a person from Machau Chat does not end their sign-in (90 days of refresh), so it fails the leaver test.
   { name: 'machau-chat', address: 'https://chat.machau.in/api/mcp', what: 'Machau Chat', bundled: false },
 ]
