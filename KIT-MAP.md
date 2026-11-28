@@ -48,6 +48,7 @@ When a working-method fix is made in Sid's set-up: add the piece to sid-mod's RE
 | scoreboard | in-team | events.jsonl log | Same local log | 2026-11-28 |
 | keysclip | sid-only | | Sid's key store and clipboard helper (Mac) | 2026-11-28 |
 | hq back office | v1 | skill my-hq (back office off by default) | Hook-driven traffic takeover is Sid's; the team version is a plain second session the person starts | 2026-11-28 |
+| hand-over watch | sid-only | | Needs an HQ registry with desks; a staff member's Claude has no desks to hand work to. A generic version (a job handed to another session shows its start or says blocked) is a v2 idea | 2026-11-28 |
 
 ## Team-only pieces (not in Sid's mod, so never "stale")
 
