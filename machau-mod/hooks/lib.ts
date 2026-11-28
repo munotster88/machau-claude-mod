@@ -276,7 +276,7 @@ export const briefFor = (description: string, prompt: string) =>
   `A task being handed to a helper agent.\nTitle: ${description}\nBrief: ${prompt.slice(0, 2000)}`
 
 // ---------- version ----------
-export const VERSION = '1.7.0' // the same number as .claude-plugin/plugin.json (a test checks it)
+export const VERSION = '1.8.0' // the same number as .claude-plugin/plugin.json (a test checks it)
 
 // ---------- which computer ----------
 // chrome.sh (a background tab in the person's own signed-in Chrome) exists on a Mac only, so the wording that points
@@ -923,3 +923,15 @@ export const CONNECTORS_ASK =
   'The person typed "machau connectors". Use the connectors skill: run `claude mcp list` in the shell, then say in one line each whether the company connectors (' +
   COMPANY_CONNECTORS.map(c => c.name).join(', ') +
   ') are connected, need a sign-in (tell them to run /mcp and sign in with their company Google account), or are missing (give the address from the skill and where to add it). Do not print any token.'
+
+
+// ---------- report a problem (1.8.0): a message that starts "[problem]" is held if it carries a secret or contact detail ----------
+export const PROBLEM_MARK = '[problem]'
+export const isProblemReport = (text: string) => text.trim().toLowerCase().startsWith(PROBLEM_MARK)
+/** What is wrong with a problem report, or undefined when it can go: it may hold order numbers and codes, never contact details or secrets. */
+export function problemReportIssue(text: string): string | undefined {
+  // An Amazon order number (171-1234567-1234567) is a case id, not a card number.
+  const body = text.replace(/\b\d{3}-\d{7}-\d{7}\b/g, 'AMZ-ORDER').slice(0, 100_000)
+  if (scrubText(body, 100_000) === body) return undefined
+  return 'machau-mod: this problem report holds something that looks like a phone number, email address, key, password or ID number. Remove it (describe the case by its order number or code only) and send again.'
+}

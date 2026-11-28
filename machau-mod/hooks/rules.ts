@@ -7,6 +7,7 @@ export const RULES_LINES = [
   'Do every step you can yourself; bring the person only sign-ins, approvals and business calls.',
   'Never say something is done or live unless you checked it; say what you checked and what you did not.',
   'When you would say "your call" or "waiting for you", make it a task for that person (skill put-offs) instead of leaving it in the chat.',
+  'A work problem you cannot solve yourself becomes a problem report to Sid (skill report-problem): solve it first, draft six fixed parts, show the person, send only on their yes.',
   'Read the last 3 days of a chat before you write in it.',
   'Check the live status yourself (order, stock, listing, ad, deploy) before you chase a person for it.',
   'Close a task only with proof, and tell the person who asked.',

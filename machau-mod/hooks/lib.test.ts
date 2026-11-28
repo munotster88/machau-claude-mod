@@ -558,3 +558,13 @@ test('the body has the written lines and counts, and no raw prompt or summary fi
   assert.equal(b.minutes, 2)
 })
 test('topics drop filler words and keep six at most', () => assert.equal(topicOf('Fix the Sutra courier booking page for Delhivery and Bluedart extra words here'), 'sutra courier booking delhivery bluedart extra'))
+
+// ---------- 1.8.0: report a problem ----------
+import { isProblemReport as isProb, problemReportIssue as probIssue } from './lib.ts'
+test('a [problem] report may hold order numbers and codes, never contact details or secrets', () => {
+  assert.ok(isProb('[problem] Courier label wrong'))
+  assert.ok(!isProb('hello [problem]'))
+  const ok = '[problem] Wrong label\nTrying to do: print a label\nExample: order BS1042 and Amazon order 171-1234567-1234567\nCost: 3 orders a day'
+  assert.equal(probIssue(ok), undefined)
+  for (const bad of ['call the buyer on 98765 43210', 'mail ravi@example.com', 'key sk-abcdefghijklmnop1234567890', 'password is hunter2xyz']) assert.match(String(probIssue('[problem] x ' + bad)), /Remove it/)
+})

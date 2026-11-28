@@ -257,3 +257,12 @@ test('team kit: a wake-up under 5 minutes, or under 20 about a chat, is refused;
   assert.equal((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 600, prompt: 'check the deploy finished' }, {})).deny, undefined) // a build or deploy is not a person
   assert.equal((await m.call('tool.call', { tool: 'ScheduleWakeup', delaySeconds: 1500, prompt: 'check the chat' }, {})).deny, undefined)
 })
+
+test('report a problem: a [problem] message with a phone number is held; a clean one goes', async () => {
+  const m = await load()
+  await m.call('tool.call', { tool: 'mcp__machau-chat__get_messages', chat_id: 'sid-chat' }, {})
+  const bad = await m.call('tool.call', { tool: 'mcp__machau-chat__send_message', chat_id: 'sid-chat', text: '[problem] Label wrong. Buyer phone 98765 43210' }, {})
+  assert.match(String(bad.deny), /phone number/)
+  const good = await m.call('tool.call', { tool: 'mcp__machau-chat__send_message', chat_id: 'sid-chat', text: '[problem] Label wrong. Example: order BS1042' }, {})
+  assert.equal(good.deny, undefined)
+})

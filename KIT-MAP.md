@@ -57,3 +57,4 @@ When a working-method fix is made in Sid's set-up: add the piece to sid-mod's RE
 | needs-you list | v1 | skill needs-you (1.6.0) | Live list from the person's own tasks | 2026-11-28 |
 | my hq (light) | v1 | skill my-hq (1.6.0) | One main session; back office off by default | 2026-11-28 |
 | company connectors | v1 | .mcp.json (staff app) + skill connectors + `machau connectors` (1.7.0) | staff app, Sutra and Machau Chat carried; Engage and Brain wait: they fail the leaver test | 2026-11-28 |
+| report a problem | v1 | skill report-problem + rule + [problem] guard (1.8.0) | Sid 28 Nov: solve it with Claude first; if not, a six-part report to Sid's chat desk, only on the person's yes | 2026-11-28 |

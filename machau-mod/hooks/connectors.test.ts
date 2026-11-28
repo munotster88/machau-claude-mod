@@ -47,3 +47,10 @@ test('the needs-you skill carries the page exactly, so no first run has to look 
   const page = readFileSync(fileURLToPath(new URL('../skills/needs-you/page.html', import.meta.url)), 'utf8').trim()
   assert.ok(skill.includes(page), 'SKILL.md must contain page.html unchanged')
 })
+
+test('the report-problem skill has the six fixed parts, the first line, and the no-secrets rule', () => {
+  const s = readFileSync(fileURLToPath(new URL('../skills/report-problem/SKILL.md', import.meta.url)), 'utf8')
+  for (const part of ['Trying to do', 'Happened instead', 'Example', 'How often and cost', 'Already tried', 'Fix, in their words']) assert.ok(s.includes(part), part)
+  assert.ok(s.includes('[problem] <one-line title>'))
+  assert.ok(/Amazon buyer detail/.test(s) && /send this to Sid\?/.test(s))
+})

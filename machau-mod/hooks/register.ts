@@ -6,6 +6,7 @@ import {
   sizeMark, smartShrink, startKind, trimInstructions, trimSkills, trimToolList, worthShrinking,
   INBOX_NUDGE, INBOX_SECTION, ROLE_ASK, ROLE_KITS, dayOf, founderEmailOf, inboxDue, isMachauChatTool, kitCheck, kitSection, kitStateFor, kitToldIn,
   CONNECTORS_ASK, asksConnectors, connectorsSeen,
+  isProblemReport, problemReportIssue,
   READ_FIRST, POLL_REFUSED, chatIdOfCall, isChatRead, isChatSend, tooShortWakeup,
   COLLECTOR_URL, RECORD_URL, ENROL_URL, enrolCodeIn, readCollector, heartbeatBody, heartbeatDue, istDayOf, looksLikeCorrection, recordBody, newStats, parseRecordReply, recordDue, RECORD_ASK, type RecordStats,
   KIT_SERVERS, readProfile, roleFrom, roleOf, splitMcp, techDeskOf, type KitState, type Profile, type Role,
@@ -298,6 +299,10 @@ export const register: Register = on => {
     if (tooShortWakeup(tool, e as Record<string, unknown>) && (await sw($)).pollGuard) {
       void record($, 'pollGuard', { refused: true })
       return { deny: POLL_REFUSED }
+    }
+    if (isChatSend(tool)) {
+      const text = String((e as Record<string, unknown>).text ?? (e as { input?: { text?: unknown } }).input?.text ?? '')
+      if (isProblemReport(text)) { const why = problemReportIssue(text); if (why) { void record($, 'reportProblem', { held: true }); return { deny: why } } }
     }
     if (isChatRead(tool)) { const c = chatIdOfCall(e as Record<string, unknown>); if (c) chatsRead.add(c) }
     else if (isChatSend(tool) && (await sw($)).readThread) {
